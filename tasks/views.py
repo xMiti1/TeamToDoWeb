@@ -1,14 +1,27 @@
 ﻿from django.shortcuts import render, redirect, get_object_or_404
-from django.contrib.auth.mixins import LoginRequiredMixin
+from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
 from django.views.generic import ListView, CreateView, UpdateView, DeleteView, DetailView
 from django.urls import reverse_lazy, reverse
+from django.db import transaction
 from django.db.models import Q, Case, When, Value, IntegerField
 from django.http import HttpResponse, JsonResponse, Http404
 from django.views import View
 from django.utils import timezone
-import csv
+from django.utils.html import escape
+from django.contrib import messages
+from datetime import datetime
+from io import BytesIO
+import os
+import sqlite3
+import tempfile
+import zipfile
 import uuid
 from django.contrib.auth import get_user_model
+from django.core.files import File
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import mm
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 
 from .models import Task, Group, Comment, ChangeLog, Attachment, Team
 from .forms import TaskForm, GroupForm, CommentForm
@@ -862,46 +875,663 @@ class CommentDeleteView(LoginRequiredMixin, View):
         return redirect('tasks:detail', pk=task_pk)
 
 
-# --- Export ---
-class TaskExportCSVView(LoginRequiredMixin, View):
-    def get(self, request):
-        qs = _task_queryset_visible_to(request.user).select_related('created_by', 'group', 'team')
-        response = HttpResponse(content_type='text/csv')
-        response['Content-Disposition'] = 'attachment; filename="teamtodo_tasks.csv"'
-        response.write('\ufeff')
-        w = csv.writer(response)
-        w.writerow(['ID', 'Titel', 'Status', 'Fortschritt', 'Team', 'Gruppe', 'Ersteller', 'FÃ¤llig', 'Erstellt'])
-        for t in qs:
-            w.writerow([
-                t.pk, t.title, t.get_status_display(), t.progress,
-                t.team.name if t.team else 'Privat',
-                t.group.name if t.group else '', t.created_by.email,
-                t.due_date.isoformat() if t.due_date else '', timezone.localtime(t.created_at).isoformat(),
-            ])
-        return response
+# --- Export / Import ---
+def _parse_desktop_datetime(raw_value):
+    if not raw_value:
+        return None
+    value = str(raw_value).strip()
+    for fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%dT%H:%M:%S.%f', '%Y-%m-%d'):
+        try:
+            parsed = datetime.strptime(value, fmt)
+            if timezone.is_naive(parsed):
+                return timezone.make_aware(parsed, timezone.get_current_timezone())
+            return parsed
+        except ValueError:
+            continue
+    return None
 
 
-class TaskExportJSONView(LoginRequiredMixin, View):
+def _parse_desktop_date(raw_value):
+    if not raw_value:
+        return None
+    value = str(raw_value).strip()
+    for fmt in ('%Y-%m-%d', '%d.%m.%Y', '%Y-%m-%d %H:%M:%S'):
+        try:
+            return datetime.strptime(value, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _safe_text(raw_value, fallback=''):
+    return (str(raw_value).strip() if raw_value is not None else fallback) or fallback
+
+
+def _safe_int(raw_value, default=0):
+    try:
+        return int(raw_value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _find_user_for_desktop_username(username, desktop_users, explicit_user_map=None):
+    if not username:
+        return None
+    raw = str(username).strip()
+    if not raw or raw.upper() == 'SYSTEM':
+        return None
+    explicit_user_map = explicit_user_map or {}
+    if raw in explicit_user_map:
+        return explicit_user_map[raw]
+    if raw.lower() in explicit_user_map:
+        return explicit_user_map[raw.lower()]
+
+    direct = User.objects.filter(email__iexact=raw).first()
+    if direct:
+        return direct
+
+    desktop_display = (desktop_users.get(raw) or {}).get('display_name')
+    if desktop_display:
+        by_display = User.objects.filter(display_name__iexact=desktop_display).first()
+        if by_display:
+            return by_display
+
+    by_display_raw = User.objects.filter(display_name__iexact=raw).first()
+    if by_display_raw:
+        return by_display_raw
+
+    by_local_part = User.objects.filter(email__istartswith=f'{raw}@').first()
+    if by_local_part:
+        return by_local_part
+
+    return None
+
+
+def _collect_group_descendants(group_rows, root_group_id):
+    by_parent = {}
+    for row in group_rows:
+        by_parent.setdefault(row.parent_id, []).append(row.id)
+
+    descendants = set()
+    stack = [root_group_id]
+    while stack:
+        gid = stack.pop()
+        if gid in descendants:
+            continue
+        descendants.add(gid)
+        stack.extend(by_parent.get(gid, []))
+    return descendants
+
+
+def _format_dt_for_pdf(value):
+    if not value:
+        return '-'
+    dt = value
+    if timezone.is_naive(dt):
+        dt = timezone.make_aware(dt, timezone.get_current_timezone())
+    return timezone.localtime(dt).strftime('%d.%m.%Y %H:%M')
+
+
+def _pdf_escape(raw):
+    return escape((raw or '').replace('\r\n', '\n').replace('\r', '\n')).replace('\n', '<br/>')
+
+
+def _build_pdf_response(title, story):
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        leftMargin=18 * mm,
+        rightMargin=18 * mm,
+        topMargin=16 * mm,
+        bottomMargin=16 * mm,
+        title=title,
+    )
+    doc.build(story)
+    payload = buffer.getvalue()
+    buffer.close()
+
+    safe_name = ''.join(ch if ch.isalnum() or ch in ('-', '_') else '_' for ch in title)[:80] or 'teamtodo_export'
+    response = HttpResponse(payload, content_type='application/pdf')
+    response['Content-Disposition'] = f'attachment; filename="{safe_name}.pdf"'
+    return response
+
+
+def _build_task_story(tasks, comments_by_task):
+    styles = getSampleStyleSheet()
+    body = styles['BodyText']
+    body.spaceAfter = 4
+    meta = ParagraphStyle('Meta', parent=body, textColor='#444444', fontSize=9, leading=12)
+
+    story = []
+    for index, task in enumerate(tasks):
+        story.append(Paragraph(_pdf_escape(task.title), styles['Heading2']))
+        story.append(Paragraph(
+            f'Status: {task.get_status_display()} | Fortschritt: {task.progress}% | Team: {_pdf_escape(task.team.name if task.team else "Privat")}',
+            meta,
+        ))
+        story.append(Paragraph(
+            f'Gruppe: {_pdf_escape(task.group.name if task.group else "-")} | Faellig: {task.due_date.isoformat() if task.due_date else "-"} | Erstellt: {_format_dt_for_pdf(task.created_at)}',
+            meta,
+        ))
+        story.append(Spacer(1, 4))
+
+        description = task.description.strip() if task.description else ''
+        story.append(Paragraph(f'<b>Beschreibung</b><br/>{_pdf_escape(description) or "-"}', body))
+        story.append(Spacer(1, 4))
+
+        task_comments = comments_by_task.get(task.id, [])
+        story.append(Paragraph('<b>Kommentare</b>', body))
+        if not task_comments:
+            story.append(Paragraph('-', body))
+        else:
+            for comment in task_comments:
+                if comment.is_system:
+                    author_label = 'SYSTEM'
+                elif comment.author:
+                    author_label = comment.author.display_name or comment.author.email
+                else:
+                    author_label = 'Unbekannt'
+                stamp = _format_dt_for_pdf(comment.created_at)
+                story.append(Paragraph(f'<b>{_pdf_escape(author_label)}</b> ({stamp})', meta))
+                story.append(Paragraph(_pdf_escape(comment.content), body))
+                story.append(Spacer(1, 2))
+
+        if index < len(tasks) - 1:
+            story.append(Spacer(1, 10))
+    return story
+
+
+class TaskExportPDFView(LoginRequiredMixin, View):
+    template_name = 'tasks/export_pdf.html'
+
     def get(self, request):
-        qs = _task_queryset_visible_to(request.user).select_related('created_by', 'group', 'team').prefetch_related('assignees')
-        tasks = []
-        for t in qs:
-            tasks.append({
-                'id': t.pk, 'title': t.title, 'description': t.description,
-                'status': t.status, 'progress': t.progress, 'urgent': t.urgent,
-                'due_date': t.due_date.isoformat() if t.due_date else None,
-                'version': t.version, 'team': t.team.name if t.team else 'Privat', 'group': t.group.name if t.group else None,
-                'created_by': t.created_by.email, 'created_at': timezone.localtime(t.created_at).isoformat(),
-                'assignees': [a.email for a in t.assignees.all()],
-            })
-        comments = []
-        for c in Comment.objects.filter(task__in=qs).select_related('author', 'task'):
-            comments.append({
-                'task_id': c.task_id, 'author': c.author.email if c.author else 'SYSTEM',
-                'content': c.content, 'is_system': c.is_system, 'created_at': timezone.localtime(c.created_at).isoformat(),
-            })
-        data = {'tasks': tasks, 'comments': comments, 'exported_at': timezone.now().isoformat()}
-        return JsonResponse(data)
+        tasks = _task_queryset_visible_to(request.user).select_related('group', 'team').order_by('title', 'id')
+        groups = Group.objects.filter(Q(team__isnull=True) | Q(team__members=request.user)).distinct().order_by('name')
+        return render(request, self.template_name, {
+            'tasks': tasks,
+            'groups': groups,
+        })
+
+    def post(self, request):
+        export_type = (request.POST.get('export_type') or 'task').strip().lower()
+        visible_tasks = _task_queryset_visible_to(request.user).select_related('group', 'team')
+
+        if export_type == 'task':
+            task_raw = (request.POST.get('task_id') or '').strip()
+            if not task_raw.isdigit():
+                messages.error(request, 'Bitte eine Aufgabe auswaehlen.')
+                return redirect('tasks:export_pdf')
+            task = visible_tasks.filter(pk=int(task_raw)).first()
+            if not task:
+                messages.error(request, 'Aufgabe nicht gefunden oder nicht sichtbar.')
+                return redirect('tasks:export_pdf')
+            tasks = [task]
+            title = f'Task_{task.title}'
+        else:
+            groups = list(Group.objects.filter(Q(team__isnull=True) | Q(team__members=request.user)).distinct())
+            group_raw = (request.POST.get('group_id') or '').strip()
+            if group_raw == 'ungrouped':
+                tasks = list(visible_tasks.filter(group__isnull=True).order_by('title', 'id'))
+                title = 'Gruppe_Ohne_Gruppe'
+            elif group_raw.isdigit():
+                group_id = int(group_raw)
+                group_obj = next((g for g in groups if g.id == group_id), None)
+                if not group_obj:
+                    messages.error(request, 'Gruppe nicht gefunden oder nicht sichtbar.')
+                    return redirect('tasks:export_pdf')
+                descendant_ids = _collect_group_descendants(groups, group_obj.id)
+                tasks = list(visible_tasks.filter(group_id__in=descendant_ids).order_by('title', 'id'))
+                title = f'Gruppe_{group_obj.name}'
+            else:
+                messages.error(request, 'Bitte eine Gruppe auswaehlen.')
+                return redirect('tasks:export_pdf')
+
+            if not tasks:
+                messages.error(request, 'Keine Aufgaben fuer den gewaehlten Export gefunden.')
+                return redirect('tasks:export_pdf')
+
+        comments = Comment.objects.filter(task__in=tasks).select_related('author').order_by('created_at', 'id')
+        comments_by_task = {}
+        for comment in comments:
+            comments_by_task.setdefault(comment.task_id, []).append(comment)
+
+        story = [Paragraph(_pdf_escape('TeamToDo Export'), getSampleStyleSheet()['Heading1']), Spacer(1, 8)]
+        story.extend(_build_task_story(tasks, comments_by_task))
+        return _build_pdf_response(title, story)
+
+
+class DesktopDatabaseImportView(LoginRequiredMixin, UserPassesTestMixin, View):
+    template_name = 'tasks/import_desktop_db.html'
+
+    def test_func(self):
+        return self.request.user.is_staff or self.request.user.is_superuser
+
+    def handle_no_permission(self):
+        raise Http404
+
+    def _available_teams(self):
+        return Team.objects.order_by('name')
+
+    def _active_users(self):
+        return User.objects.filter(is_active=True).order_by('display_name', 'email')
+
+    def get(self, request):
+        return render(request, self.template_name, {
+            'teams': self._available_teams(),
+            'users': self._active_users(),
+        })
+
+    def post(self, request):
+        uploaded = request.FILES.get('db_file')
+        if not uploaded:
+            messages.error(request, 'Bitte eine Desktop-Datenbankdatei auswaehlen.')
+            return redirect('tasks:import_desktop_db')
+
+        team_raw = (request.POST.get('team_id') or '').strip()
+        if not team_raw.isdigit():
+            messages.error(request, 'Bitte ein Ziel-Team auswaehlen.')
+            return redirect('tasks:import_desktop_db')
+        team = Team.objects.filter(pk=int(team_raw)).first()
+        if not team:
+            messages.error(request, 'Ziel-Team nicht gefunden.')
+            return redirect('tasks:import_desktop_db')
+
+        tmp_path = None
+        attachment_temp_dir = None
+        try:
+            suffix = os.path.splitext(uploaded.name or '')[1] or '.db'
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                for chunk in uploaded.chunks():
+                    tmp.write(chunk)
+                tmp_path = tmp.name
+
+            user_map = self._parse_user_mapping(request.POST.get('user_mapping') or '')
+            attachment_temp_dir, attachment_sources = self._prepare_attachment_sources(request)
+            stats = self._import_desktop_db(
+                tmp_path,
+                importing_user=request.user,
+                target_team=team,
+                explicit_user_map=user_map,
+                attachment_sources=attachment_sources,
+            )
+            messages.success(
+                request,
+                (
+                    f'Import erfolgreich: {stats["groups"]} Gruppen, {stats["tasks"]} Aufgaben, '
+                    f'{stats["comments"]} Kommentare, {stats["attachments"]} Anhaenge '
+                    f'({stats["attachments_missing"]} ohne Quelldatei).'
+                ),
+            )
+        except Exception as exc:
+            messages.error(request, f'Import fehlgeschlagen: {exc}')
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
+            if attachment_temp_dir and os.path.exists(attachment_temp_dir):
+                try:
+                    import shutil
+                    shutil.rmtree(attachment_temp_dir, ignore_errors=True)
+                except OSError:
+                    pass
+
+        return redirect('tasks:import_desktop_db')
+
+    def _parse_user_mapping(self, raw_mapping):
+        mapping = {}
+        if not raw_mapping:
+            return mapping
+
+        lines = [line.strip() for line in str(raw_mapping).splitlines() if line.strip()]
+        for line in lines:
+            if '=' not in line:
+                raise RuntimeError(f'Ungueltige Mapping-Zeile "{line}". Format: altname=ziel')
+            source, target = line.split('=', 1)
+            source = source.strip()
+            target = target.strip()
+            if not source or not target:
+                raise RuntimeError(f'Ungueltige Mapping-Zeile "{line}".')
+
+            user_obj = None
+            if target.isdigit():
+                user_obj = User.objects.filter(pk=int(target), is_active=True).first()
+            if not user_obj:
+                user_obj = User.objects.filter(email__iexact=target, is_active=True).first()
+            if not user_obj:
+                user_obj = User.objects.filter(display_name__iexact=target, is_active=True).first()
+            if not user_obj:
+                raise RuntimeError(f'Zielbenutzer "{target}" aus Mapping "{line}" nicht gefunden.')
+            mapping[source] = user_obj
+            mapping[source.lower()] = user_obj
+        return mapping
+
+    def _normalize_attachment_key(self, value):
+        key = str(value or '').strip().replace('\\', '/')
+        while key.startswith('./'):
+            key = key[2:]
+        while key.startswith('/'):
+            key = key[1:]
+        return key
+
+    def _prepare_attachment_sources(self, request):
+        temp_dir = tempfile.mkdtemp(prefix='teamtodo_import_attach_')
+        indexed = {}
+        basename_index = {}
+
+        def add_index(path):
+            rel = os.path.relpath(path, temp_dir).replace('\\', '/')
+            key = self._normalize_attachment_key(rel)
+            indexed[key] = path
+            base = os.path.basename(key)
+            basename_index.setdefault(base, []).append(path)
+
+        archive = request.FILES.get('attachments_zip')
+        if archive and archive.size:
+            archive_path = os.path.join(temp_dir, '__archive__.zip')
+            with open(archive_path, 'wb') as fh:
+                for chunk in archive.chunks():
+                    fh.write(chunk)
+            try:
+                with zipfile.ZipFile(archive_path, 'r') as zf:
+                    base_dir = os.path.abspath(temp_dir)
+                    for member in zf.namelist():
+                        member_path = os.path.abspath(os.path.join(base_dir, member))
+                        if not member_path.startswith(base_dir + os.sep) and member_path != base_dir:
+                            continue
+                        zf.extract(member, base_dir)
+            except zipfile.BadZipFile as exc:
+                raise RuntimeError(f'Anhangs-ZIP ist ungueltig: {exc}')
+
+        for f in request.FILES.getlist('attachments_files'):
+            rel_name = self._normalize_attachment_key(getattr(f, 'name', '') or '')
+            if not rel_name:
+                continue
+            target_path = os.path.join(temp_dir, rel_name.replace('/', os.sep))
+            os.makedirs(os.path.dirname(target_path), exist_ok=True)
+            with open(target_path, 'wb') as fh:
+                for chunk in f.chunks():
+                    fh.write(chunk)
+
+        for root, _, files in os.walk(temp_dir):
+            for name in files:
+                if name == '__archive__.zip':
+                    continue
+                add_index(os.path.join(root, name))
+
+        return temp_dir, {
+            'exact': indexed,
+            'basename': basename_index,
+        }
+
+    def _find_attachment_path(self, attachment_sources, db_file_name):
+        if not db_file_name:
+            return None
+        key = self._normalize_attachment_key(db_file_name)
+        if key in attachment_sources['exact']:
+            return attachment_sources['exact'][key]
+        base = os.path.basename(key)
+        candidates = attachment_sources['basename'].get(base, [])
+        if len(candidates) == 1:
+            return candidates[0]
+        return None
+
+    def _table_exists(self, conn, table_name):
+        row = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+            (table_name,),
+        ).fetchone()
+        return bool(row)
+
+    def _table_columns(self, conn, table_name):
+        return {row[1] for row in conn.execute(f'PRAGMA table_info({table_name})').fetchall()}
+
+    def _import_desktop_db(self, db_path, importing_user, target_team, explicit_user_map=None, attachment_sources=None):
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        try:
+            if not self._table_exists(conn, 'tasks'):
+                raise RuntimeError('Die Datei enthaelt keine tasks-Tabelle und ist keine unterstuetzte TeamToDo-Desktop-DB.')
+            if not target_team:
+                raise RuntimeError('Es wurde kein Ziel-Team uebergeben.')
+            explicit_user_map = explicit_user_map or {}
+            attachment_sources = attachment_sources or {'exact': {}, 'basename': {}}
+
+            desktop_users = {}
+            if self._table_exists(conn, 'users'):
+                for row in conn.execute('SELECT username, display_name, color FROM users').fetchall():
+                    desktop_users[row['username']] = {
+                        'display_name': row['display_name'],
+                        'color': row['color'],
+                    }
+
+            group_count = 0
+            task_count = 0
+            comment_count = 0
+            attachment_count = 0
+            attachment_missing = 0
+
+            with transaction.atomic():
+                group_map = {}
+                known_team_users = set(target_team.members.values_list('pk', flat=True))
+                mapped_users_to_add = set()
+                if self._table_exists(conn, 'groups'):
+                    group_rows = conn.execute('SELECT id, name, color, parent_id FROM groups ORDER BY id').fetchall()
+                    for row in group_rows:
+                        group = Group.objects.create(
+                            name=_safe_text(row['name'], f'Import Gruppe {row["id"]}'),
+                            color=_safe_text(row['color'], '#888888'),
+                            team=target_team,
+                        )
+                        group_map[row['id']] = group.id
+                        group_count += 1
+
+                    for row in group_rows:
+                        old_parent = row['parent_id']
+                        new_group_id = group_map.get(row['id'])
+                        new_parent_id = group_map.get(old_parent) if old_parent is not None else None
+                        if new_group_id and old_parent is not None:
+                            Group.objects.filter(pk=new_group_id).update(parent_id=new_parent_id)
+
+                task_columns = self._table_columns(conn, 'tasks')
+
+                def tcol(column_name, fallback_sql):
+                    return column_name if column_name in task_columns else f'{fallback_sql} AS {column_name}'
+
+                task_query = f'''
+                    SELECT
+                        id,
+                        title,
+                        {tcol('description', "''")},
+                        {tcol('status', "'open'")},
+                        {tcol('progress', '0')},
+                        {tcol('urgent', '0')},
+                        {tcol('assignees', "''")},
+                        {tcol('group_id', 'NULL')},
+                        {tcol('due_date', 'NULL')},
+                        {tcol('created_at', 'NULL')},
+                        {tcol('created_by', "''")},
+                        {tcol('updated_at', 'NULL')},
+                        {tcol('updated_by', 'NULL')},
+                        {tcol('version', '1')}
+                    FROM tasks
+                    ORDER BY id
+                '''
+                task_rows = conn.execute(task_query).fetchall()
+
+                comments_by_task = {}
+                comment_map = {}
+                if self._table_exists(conn, 'comments'):
+                    for crow in conn.execute('SELECT id, task_id, author, content, created_at FROM comments ORDER BY id').fetchall():
+                        comments_by_task.setdefault(crow['task_id'], []).append(crow)
+
+                attachments_rows = []
+                if self._table_exists(conn, 'attachments'):
+                    attachment_columns = self._table_columns(conn, 'attachments')
+                    if {'entity_type', 'entity_id', 'file_name'}.issubset(attachment_columns):
+                        attachment_query = '''
+                            SELECT id, entity_type, entity_id, file_name, original_name, mime_type, created_at, created_by
+                            FROM attachments
+                            ORDER BY created_at, id
+                        '''
+                        attachments_rows = conn.execute(attachment_query).fetchall()
+
+                task_map = {}
+                for row in task_rows:
+                    creator = _find_user_for_desktop_username(row['created_by'], desktop_users, explicit_user_map) or importing_user
+                    updater = _find_user_for_desktop_username(row['updated_by'], desktop_users, explicit_user_map) or creator
+                    mapped_users_to_add.update([creator.pk, updater.pk])
+
+                    status = _safe_text(row['status'], 'open').lower()
+                    if status not in {'open', 'urgent', 'pause', 'done'}:
+                        status = 'open'
+                    urgent = bool(_safe_int(row['urgent'], 0))
+                    if urgent:
+                        status = 'urgent'
+
+                    progress = _normalize_progress(row['progress'], default=0)
+                    due_date = _parse_desktop_date(row['due_date'])
+                    group_id = group_map.get(row['group_id']) if row['group_id'] is not None else None
+
+                    task = Task.objects.create(
+                        title=_safe_text(row['title'], f'Import Task {row["id"]}'),
+                        description=_safe_text(row['description'], ''),
+                        status=status,
+                        progress=progress,
+                        urgent=urgent,
+                        due_date=due_date,
+                        version=max(1, _safe_int(row['version'], 1)),
+                        created_by=creator,
+                        updated_by=updater,
+                        team=target_team,
+                        group_id=group_id,
+                        is_team_visible=True,
+                    )
+
+                    created_at = _parse_desktop_datetime(row['created_at'])
+                    updated_at = _parse_desktop_datetime(row['updated_at'])
+                    update_kwargs = {}
+                    if created_at:
+                        update_kwargs['created_at'] = created_at
+                    if updated_at:
+                        update_kwargs['updated_at'] = updated_at
+                    if update_kwargs:
+                        Task.objects.filter(pk=task.pk).update(**update_kwargs)
+
+                    raw_assignees = _safe_text(row['assignees'], '')
+                    if raw_assignees:
+                        assignee_users = []
+                        for username in [entry.strip() for entry in raw_assignees.split(',') if entry.strip()]:
+                            mapped_user = _find_user_for_desktop_username(username, desktop_users, explicit_user_map)
+                            if mapped_user:
+                                mapped_users_to_add.add(mapped_user.pk)
+                                assignee_users.append(mapped_user)
+                        if assignee_users:
+                            task.assignees.set(assignee_users)
+
+                    task_count += 1
+                    task_map[row['id']] = task.id
+
+                    for crow in comments_by_task.get(row['id'], []):
+                        author_raw = _safe_text(crow['author'], '')
+                        is_system = author_raw.upper() == 'SYSTEM'
+                        author_user = None if is_system else _find_user_for_desktop_username(author_raw, desktop_users, explicit_user_map)
+                        if author_user:
+                            mapped_users_to_add.add(author_user.pk)
+                        content = _safe_text(crow['content'], '')
+                        if not is_system and author_raw and not author_user:
+                            content = f'[{author_raw}] {content}'
+
+                        comment = Comment.objects.create(
+                            task_id=task.id,
+                            author=author_user,
+                            content=content,
+                            is_system=is_system,
+                        )
+                        comment_created = _parse_desktop_datetime(crow['created_at'])
+                        if comment_created:
+                            Comment.objects.filter(pk=comment.pk).update(created_at=comment_created)
+                        comment_map[crow['id']] = comment.id
+                        comment_count += 1
+
+                if mapped_users_to_add:
+                    add_ids = [uid for uid in mapped_users_to_add if uid not in known_team_users]
+                    if add_ids:
+                        target_team.members.add(*User.objects.filter(pk__in=add_ids))
+                        known_team_users.update(add_ids)
+
+                for arow in attachments_rows:
+                    source_file_name = _safe_text(arow['file_name'], '')
+                    source_path = self._find_attachment_path(attachment_sources, source_file_name)
+                    if not source_path or not os.path.exists(source_path):
+                        attachment_missing += 1
+                        continue
+
+                    entity_type = _safe_text(arow['entity_type'], '').lower()
+                    if entity_type not in {'task_desc', 'comment'}:
+                        attachment_missing += 1
+                        continue
+
+                    if entity_type == 'task_desc':
+                        new_task_id = task_map.get(arow['entity_id'])
+                        if not new_task_id:
+                            attachment_missing += 1
+                            continue
+                        target = Attachment.TARGET_TASK
+                        task_obj = Task.objects.filter(pk=new_task_id).first()
+                        if not task_obj:
+                            attachment_missing += 1
+                            continue
+                        comment_obj = None
+                    else:
+                        new_comment_id = comment_map.get(arow['entity_id'])
+                        if not new_comment_id:
+                            attachment_missing += 1
+                            continue
+                        comment_obj = Comment.objects.filter(pk=new_comment_id).first()
+                        if not comment_obj:
+                            attachment_missing += 1
+                            continue
+                        task_obj = comment_obj.task
+                        target = Attachment.TARGET_COMMENT
+
+                    created_by_user = _find_user_for_desktop_username(arow['created_by'], desktop_users, explicit_user_map) or importing_user
+                    if created_by_user:
+                        mapped_users_to_add.add(created_by_user.pk)
+                    original_name = _safe_text(arow['original_name'], '') or os.path.basename(source_file_name) or os.path.basename(source_path)
+                    storage_name = os.path.basename(original_name) or os.path.basename(source_path)
+                    with open(source_path, 'rb') as fh:
+                        att = Attachment(
+                            task=task_obj,
+                            comment=comment_obj,
+                            original_name=original_name[:255],
+                            target=target,
+                            uploaded_by=created_by_user,
+                        )
+                        att.file.save(storage_name, File(fh), save=False)
+                        att.save()
+
+                    attachment_created = _parse_desktop_datetime(arow['created_at'])
+                    if attachment_created:
+                        Attachment.objects.filter(pk=att.pk).update(created_at=attachment_created)
+                    attachment_count += 1
+
+                if mapped_users_to_add:
+                    add_ids = [uid for uid in mapped_users_to_add if uid not in known_team_users]
+                    if add_ids:
+                        target_team.members.add(*User.objects.filter(pk__in=add_ids))
+
+            return {
+                'groups': group_count,
+                'tasks': task_count,
+                'comments': comment_count,
+                'attachments': attachment_count,
+                'attachments_missing': attachment_missing,
+            }
+        finally:
+            conn.close()
 
 
 

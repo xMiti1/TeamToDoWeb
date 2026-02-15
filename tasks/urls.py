@@ -18,8 +18,8 @@ urlpatterns = [
     path('<int:pk>/progress/', views.TaskProgressUpdateView.as_view(), name='update_progress'),
     path('<int:pk>/assignees/', views.TaskAssigneesUpdateView.as_view(), name='update_assignees'),
     path('<int:pk>/attachments/', views.TaskAttachmentCreateView.as_view(), name='attachment_create'),
-    path('export/csv/', views.TaskExportCSVView.as_view(), name='export_csv'),
-    path('export/json/', views.TaskExportJSONView.as_view(), name='export_json'),
+    path('export/pdf/', views.TaskExportPDFView.as_view(), name='export_pdf'),
+    path('import/desktop-db/', views.DesktopDatabaseImportView.as_view(), name='import_desktop_db'),
     # Groups
     path('groups/', views.GroupListView.as_view(), name='group_list'),
     path('groups/create/', views.GroupCreateView.as_view(), name='group_create'),

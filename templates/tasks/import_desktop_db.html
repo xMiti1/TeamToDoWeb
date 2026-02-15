@@ -1,0 +1,67 @@
+{% extends 'base.html' %}
+{% block title %}Desktop-DB Import - TeamToDo{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-7">
+        <div class="card shadow-sm">
+            <div class="card-body">
+                <h1 class="h4 mb-3">Alte TeamToDo Desktop-Datenbank importieren</h1>
+                <p class="text-muted mb-4">
+                    Importiert Gruppen, Aufgaben, Kommentare und Anhaenge aus einer alten TeamToDo SQLite-Datenbank
+                    in ein ausgewaehltes Team.
+                </p>
+                <form method="post" enctype="multipart/form-data" class="vstack gap-3">
+                    {% csrf_token %}
+                    <div>
+                        <label class="form-label">Ziel-Team</label>
+                        <select class="form-select" name="team_id" required>
+                            <option value="">Bitte waehlen...</option>
+                            {% for team in teams %}
+                            <option value="{{ team.id }}">{{ team.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div>
+                        <label class="form-label">Desktop DB-Datei</label>
+                        <input type="file" class="form-control" name="db_file" accept=".db,.sqlite,.sqlite3" required>
+                        <div class="form-text">Unterstuetzte Dateitypen: .db, .sqlite, .sqlite3</div>
+                    </div>
+                    <div>
+                        <label class="form-label">Anhaenge (ZIP, optional)</label>
+                        <input type="file" class="form-control" name="attachments_zip" accept=".zip">
+                        <div class="form-text">ZIP des alten Anhang-Ordners hochladen (empfohlen).</div>
+                    </div>
+                    <div>
+                        <label class="form-label">Anhaenge (Ordner-Upload, optional)</label>
+                        <input type="file" class="form-control" name="attachments_files" webkitdirectory directory multiple>
+                        <div class="form-text">Alternative zum ZIP: direkt den alten Anhang-Ordner auswaehlen.</div>
+                    </div>
+                    <div>
+                        <label class="form-label">Benutzer-Mapping (optional)</label>
+                        <textarea class="form-control" rows="5" name="user_mapping" placeholder="alt_username=ziel@email.de&#10;anderer_altname=Display Name"></textarea>
+                        <div class="form-text">
+                            Format je Zeile: <code>alter_name=ziel</code>. Ziel kann User-ID, E-Mail oder Anzeigename sein.
+                        </div>
+                    </div>
+                    <div class="border rounded p-3 bg-light-subtle">
+                        <div class="small fw-semibold mb-2">Aktive Benutzer (Zielsystem)</div>
+                        <div class="small text-muted">
+                            {% for u in users %}
+                                {{ u.id }}: {{ u.display_name|default:u.email }} ({{ u.email }}){% if not forloop.last %}<br>{% endif %}
+                            {% empty %}
+                                Keine aktiven Benutzer gefunden.
+                            {% endfor %}
+                        </div>
+                    </div>
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-upload me-1"></i>Import starten
+                        </button>
+                        <a href="{% url 'tasks:dashboard' %}" class="btn btn-outline-secondary">Abbrechen</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

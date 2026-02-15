@@ -1,0 +1,68 @@
+{% extends 'base.html' %}
+{% block title %}PDF Export - TeamToDo{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-8">
+        <div class="card shadow-sm">
+            <div class="card-body">
+                <h1 class="h4 mb-3">Export als PDF</h1>
+                <form method="post" class="vstack gap-3">
+                    {% csrf_token %}
+                    <div>
+                        <label class="form-label">Export-Typ</label>
+                        <select class="form-select" name="export_type" id="export_type">
+                            <option value="task">Einzelne Aufgabe</option>
+                            <option value="group">Gruppe</option>
+                        </select>
+                    </div>
+
+                    <div id="task_select_wrap">
+                        <label class="form-label">Aufgabe</label>
+                        <select class="form-select" name="task_id">
+                            <option value="">Bitte waehlen...</option>
+                            {% for task in tasks %}
+                            <option value="{{ task.id }}">{{ task.title }}{% if task.group %} ({{ task.group.name }}){% endif %}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div id="group_select_wrap" class="d-none">
+                        <label class="form-label">Gruppe</label>
+                        <select class="form-select" name="group_id">
+                            <option value="">Bitte waehlen...</option>
+                            <option value="ungrouped">Ohne Gruppe</option>
+                            {% for group in groups %}
+                            <option value="{{ group.id }}">{{ group.name }}</option>
+                            {% endfor %}
+                        </select>
+                        <div class="form-text">Bei Gruppen werden auch Untergruppen beruecksichtigt.</div>
+                    </div>
+
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-download me-1"></i>PDF erzeugen
+                        </button>
+                        <a href="{% url 'tasks:dashboard' %}" class="btn btn-outline-secondary">Abbrechen</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+{% block extra_js %}
+<script>
+(function () {
+    var typeSelect = document.getElementById('export_type');
+    var taskWrap = document.getElementById('task_select_wrap');
+    var groupWrap = document.getElementById('group_select_wrap');
+    function sync() {
+        var isGroup = typeSelect.value === 'group';
+        taskWrap.classList.toggle('d-none', isGroup);
+        groupWrap.classList.toggle('d-none', !isGroup);
+    }
+    typeSelect.addEventListener('change', sync);
+    sync();
+})();
+</script>
+{% endblock %}
