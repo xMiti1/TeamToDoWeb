@@ -95,6 +95,9 @@
                             <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">{{ user.display_name|default:user.email }}</a>
                             <ul class="dropdown-menu dropdown-menu-end">
                                 <li><a class="dropdown-item" href="{% url 'accounts:settings' %}"><i class="bi bi-gear me-1"></i>Einstellungen</a></li>
+                                {% if user.is_staff or user.is_superuser %}
+                                <li><a class="dropdown-item" href="{% url 'admin:index' %}"><i class="bi bi-shield-lock me-1"></i>Admin</a></li>
+                                {% endif %}
                                 <li><hr class="dropdown-divider"></li>
                                 <li><a class="dropdown-item" href="{% url 'tasks:export_pdf' %}"><i class="bi bi-file-earmark-pdf me-1"></i>Export PDF</a></li>
                                 {% if user.is_staff or user.is_superuser %}
