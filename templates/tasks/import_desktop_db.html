@@ -17,7 +17,7 @@
                         <select class="form-select" name="team_id" required>
                             <option value="">Bitte waehlen...</option>
                             {% for team in teams %}
-                            <option value="{{ team.id }}">{{ team.name }}</option>
+                            <option value="{{ team.id }}" {% if selected_team_id|stringformat:"s" == team.id|stringformat:"s" %}selected{% endif %}>{{ team.name }}</option>
                             {% endfor %}
                         </select>
                     </div>
@@ -38,11 +38,32 @@
                     </div>
                     <div>
                         <label class="form-label">Benutzer-Mapping (optional)</label>
-                        <textarea class="form-control" rows="5" name="user_mapping" placeholder="alt_username=ziel@email.de&#10;anderer_altname=Display Name"></textarea>
+                        <textarea class="form-control" rows="5" name="user_mapping" placeholder="alt_username=ziel@email.de&#10;anderer_altname=Display Name">{{ prefill_mapping|default:'' }}</textarea>
                         <div class="form-text">
                             Format je Zeile: <code>alter_name=ziel</code>. Ziel kann User-ID, E-Mail oder Anzeigename sein.
                         </div>
                     </div>
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-outline-primary" name="action" value="analyze">
+                            <i class="bi bi-search me-1"></i>DB analysieren
+                        </button>
+                        <button type="submit" class="btn btn-primary" name="action" value="import">
+                            <i class="bi bi-upload me-1"></i>Import starten
+                        </button>
+                        <a href="{% url 'tasks:dashboard' %}" class="btn btn-outline-secondary">Abbrechen</a>
+                    </div>
+                    {% if desktop_users %}
+                    <div class="border rounded p-3">
+                        <div class="small fw-semibold mb-2">Benutzer in der Desktop-DB</div>
+                        <div class="small text-muted">
+                            {% for du in desktop_users %}
+                                <code>{{ du.username }}</code>{% if du.display_name %} - {{ du.display_name }}{% endif %}
+                                {% if du.source == 'derived' %}<span class="badge text-bg-secondary ms-1">abgeleitet</span>{% endif %}
+                                {% if not forloop.last %}<br>{% endif %}
+                            {% endfor %}
+                        </div>
+                    </div>
+                    {% endif %}
                     <div class="border rounded p-3 bg-light-subtle">
                         <div class="small fw-semibold mb-2">Aktive Benutzer (Zielsystem)</div>
                         <div class="small text-muted">
@@ -52,12 +73,6 @@
                                 Keine aktiven Benutzer gefunden.
                             {% endfor %}
                         </div>
-                    </div>
-                    <div class="d-flex gap-2">
-                        <button type="submit" class="btn btn-primary">
-                            <i class="bi bi-upload me-1"></i>Import starten
-                        </button>
-                        <a href="{% url 'tasks:dashboard' %}" class="btn btn-outline-secondary">Abbrechen</a>
                     </div>
                 </form>
             </div>

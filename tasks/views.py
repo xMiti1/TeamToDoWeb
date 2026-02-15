@@ -12,6 +12,7 @@ from django.contrib import messages
 from datetime import datetime
 from io import BytesIO
 import os
+import re
 import sqlite3
 import tempfile
 import zipfile
@@ -27,6 +28,7 @@ from .models import Task, Group, Comment, ChangeLog, Attachment, Team
 from .forms import TaskForm, GroupForm, CommentForm
 
 User = get_user_model()
+DESKTOP_IMAGE_TAG_RE = re.compile(r"\[\[image:([a-zA-Z0-9_-]+)\]\]")
 
 
 def _log_change(request, entity_type, entity_id, action, field=None, old_value=None, new_value=None):
@@ -1120,21 +1122,14 @@ class DesktopDatabaseImportView(LoginRequiredMixin, UserPassesTestMixin, View):
         return render(request, self.template_name, {
             'teams': self._available_teams(),
             'users': self._active_users(),
+            'desktop_users': [],
         })
 
     def post(self, request):
+        action = (request.POST.get('action') or 'import').strip().lower()
         uploaded = request.FILES.get('db_file')
         if not uploaded:
             messages.error(request, 'Bitte eine Desktop-Datenbankdatei auswaehlen.')
-            return redirect('tasks:import_desktop_db')
-
-        team_raw = (request.POST.get('team_id') or '').strip()
-        if not team_raw.isdigit():
-            messages.error(request, 'Bitte ein Ziel-Team auswaehlen.')
-            return redirect('tasks:import_desktop_db')
-        team = Team.objects.filter(pk=int(team_raw)).first()
-        if not team:
-            messages.error(request, 'Ziel-Team nicht gefunden.')
             return redirect('tasks:import_desktop_db')
 
         tmp_path = None
@@ -1145,6 +1140,26 @@ class DesktopDatabaseImportView(LoginRequiredMixin, UserPassesTestMixin, View):
                 for chunk in uploaded.chunks():
                     tmp.write(chunk)
                 tmp_path = tmp.name
+
+            if action == 'analyze':
+                desktop_users = self._extract_desktop_users(tmp_path)
+                messages.success(request, f'DB analysiert: {len(desktop_users)} Desktop-Benutzer gefunden.')
+                return render(request, self.template_name, {
+                    'teams': self._available_teams(),
+                    'users': self._active_users(),
+                    'desktop_users': desktop_users,
+                    'prefill_mapping': request.POST.get('user_mapping') or '',
+                    'selected_team_id': (request.POST.get('team_id') or '').strip(),
+                })
+
+            team_raw = (request.POST.get('team_id') or '').strip()
+            if not team_raw.isdigit():
+                messages.error(request, 'Bitte ein Ziel-Team auswaehlen.')
+                return redirect('tasks:import_desktop_db')
+            team = Team.objects.filter(pk=int(team_raw)).first()
+            if not team:
+                messages.error(request, 'Ziel-Team nicht gefunden.')
+                return redirect('tasks:import_desktop_db')
 
             user_map = self._parse_user_mapping(request.POST.get('user_mapping') or '')
             attachment_temp_dir, attachment_sources = self._prepare_attachment_sources(request)
@@ -1288,6 +1303,73 @@ class DesktopDatabaseImportView(LoginRequiredMixin, UserPassesTestMixin, View):
     def _table_columns(self, conn, table_name):
         return {row[1] for row in conn.execute(f'PRAGMA table_info({table_name})').fetchall()}
 
+    def _extract_desktop_users(self, db_path):
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        try:
+            found = {}
+
+            if self._table_exists(conn, 'users'):
+                rows = conn.execute('SELECT username, display_name, color FROM users').fetchall()
+                for row in rows:
+                    username = _safe_text(row['username'], '')
+                    if not username:
+                        continue
+                    found[username] = {
+                        'username': username,
+                        'display_name': _safe_text(row['display_name'], ''),
+                        'color': _safe_text(row['color'], ''),
+                        'source': 'users',
+                    }
+
+            if self._table_exists(conn, 'tasks'):
+                task_cols = self._table_columns(conn, 'tasks')
+                if 'created_by' in task_cols:
+                    for row in conn.execute("SELECT DISTINCT created_by AS username FROM tasks WHERE COALESCE(created_by,'') <> ''").fetchall():
+                        username = _safe_text(row['username'], '')
+                        if username and username not in found:
+                            found[username] = {'username': username, 'display_name': '', 'color': '', 'source': 'derived'}
+                if 'updated_by' in task_cols:
+                    for row in conn.execute("SELECT DISTINCT updated_by AS username FROM tasks WHERE COALESCE(updated_by,'') <> ''").fetchall():
+                        username = _safe_text(row['username'], '')
+                        if username and username not in found:
+                            found[username] = {'username': username, 'display_name': '', 'color': '', 'source': 'derived'}
+                if 'assignees' in task_cols:
+                    for row in conn.execute("SELECT assignees FROM tasks WHERE COALESCE(assignees,'') <> ''").fetchall():
+                        for username in [x.strip() for x in _safe_text(row['assignees'], '').split(',') if x.strip()]:
+                            if username and username not in found:
+                                found[username] = {'username': username, 'display_name': '', 'color': '', 'source': 'derived'}
+
+            if self._table_exists(conn, 'comments'):
+                comment_cols = self._table_columns(conn, 'comments')
+                if 'author' in comment_cols:
+                    for row in conn.execute("SELECT DISTINCT author AS username FROM comments WHERE COALESCE(author,'') <> ''").fetchall():
+                        username = _safe_text(row['username'], '')
+                        if username and username.upper() != 'SYSTEM' and username not in found:
+                            found[username] = {'username': username, 'display_name': '', 'color': '', 'source': 'derived'}
+
+            return sorted(found.values(), key=lambda x: (x.get('display_name') or '').lower() + '|' + x['username'].lower())
+        finally:
+            conn.close()
+
+    def _convert_desktop_image_tags(self, text_value, imported_attachment_map):
+        text = text_value or ''
+        if not text:
+            return text
+
+        def repl(match):
+            old_attachment_id = match.group(1)
+            attachment = imported_attachment_map.get(old_attachment_id)
+            if not attachment:
+                return match.group(0)
+            label = attachment.filename
+            url = attachment.file.url
+            if attachment.is_image:
+                return f'![{label}]({url})'
+            return f'[{label}]({url})'
+
+        return DESKTOP_IMAGE_TAG_RE.sub(repl, text)
+
     def _import_desktop_db(self, db_path, importing_user, target_team, explicit_user_map=None, attachment_sources=None):
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
@@ -1379,6 +1461,7 @@ class DesktopDatabaseImportView(LoginRequiredMixin, UserPassesTestMixin, View):
                         attachments_rows = conn.execute(attachment_query).fetchall()
 
                 task_map = {}
+                imported_attachment_map = {}
                 for row in task_rows:
                     creator = _find_user_for_desktop_username(row['created_by'], desktop_users, explicit_user_map) or importing_user
                     updater = _find_user_for_desktop_username(row['updated_by'], desktop_users, explicit_user_map) or creator
@@ -1512,11 +1595,31 @@ class DesktopDatabaseImportView(LoginRequiredMixin, UserPassesTestMixin, View):
                         )
                         att.file.save(storage_name, File(fh), save=False)
                         att.save()
+                    imported_attachment_map[str(arow['id'])] = att
 
                     attachment_created = _parse_desktop_datetime(arow['created_at'])
                     if attachment_created:
                         Attachment.objects.filter(pk=att.pk).update(created_at=attachment_created)
                     attachment_count += 1
+
+                if imported_attachment_map:
+                    for task_id in task_map.values():
+                        task_obj = Task.objects.filter(pk=task_id).first()
+                        if not task_obj:
+                            continue
+                        converted_desc = self._convert_desktop_image_tags(task_obj.description, imported_attachment_map)
+                        if converted_desc != (task_obj.description or ''):
+                            task_obj.description = converted_desc
+                            task_obj.save(update_fields=['description'])
+
+                    for comment_id in comment_map.values():
+                        comment_obj = Comment.objects.filter(pk=comment_id).first()
+                        if not comment_obj:
+                            continue
+                        converted_content = self._convert_desktop_image_tags(comment_obj.content, imported_attachment_map)
+                        if converted_content != (comment_obj.content or ''):
+                            comment_obj.content = converted_content
+                            comment_obj.save(update_fields=['content'])
 
                 if mapped_users_to_add:
                     add_ids = [uid for uid in mapped_users_to_add if uid not in known_team_users]
