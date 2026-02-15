@@ -1,0 +1,97 @@
+﻿{% extends "base.html" %}
+{% block title %}Dashboard - TeamToDo{% endblock %}
+{% block main_class %}container-fluid p-0 min-vh-100 d-flex flex-column{% endblock %}
+
+{% block content %}
+<div class="px-3 pt-2 border-bottom" style="background: var(--bs-body-bg);">
+    <ul class="nav nav-tabs team-scope-tabs d-flex">
+        {% for key, label in team_tabs %}
+        <li class="nav-item flex-fill">
+            <a class="nav-link text-center {% if active_scope == key %}active{% endif %}" href="{% url 'tasks:dashboard' %}?scope={{ key }}">{{ label }}</a>
+        </li>
+        {% endfor %}
+    </ul>
+</div>
+
+<div class="row g-0 flex-grow-1 dashboard-layout flex-grow-1">
+    <aside class="col-md-4 col-lg-4 border-end bg-body-secondary task-sidebar">
+        <div class="p-3 sticky-top">
+            <form method="get" action="{% url 'tasks:dashboard' %}" id="filter-form"
+                  hx-get="{% url 'tasks:dashboard' %}?partial=tasklist"
+                  hx-target="#task-list-container"
+                  hx-swap="innerHTML"
+                  hx-include="[name=q],[name=sort],[name=section],[name=scope]"
+                  hx-trigger="change from:select delay:100ms">
+                <input type="hidden" name="partial" value="tasklist">
+                <input type="hidden" name="scope" value="{{ active_scope }}">
+                <label for="id_q" class="form-label small visually-hidden">Suche</label>
+                <div class="input-group input-group-sm mb-2">
+                    <span class="input-group-text"><i class="bi bi-search"></i></span>
+                    <input type="search" name="q" id="id_q" class="form-control" placeholder="Suchen (Titel/Beschreibung)..."
+                           value="{{ search_query }}"
+                           hx-get="{% url 'tasks:dashboard' %}?partial=tasklist"
+                           hx-target="#task-list-container"
+                           hx-include="[name=q],[name=sort],[name=section],[name=scope]"
+                           hx-trigger="keyup delay:300ms">
+                </div>
+                <div class="d-flex gap-2 mb-2 flex-wrap">
+                    <select name="section" class="form-select form-select-sm" style="max-width:8rem">
+                        <option value="all" {% if section_mode == 'all' %}selected{% endif %}>Alle To-Do's</option>
+                        <option value="assigned" {% if section_mode == 'assigned' %}selected{% endif %}>Dir zugeordnet</option>
+                    </select>
+                    <select name="sort" class="form-select form-select-sm" style="max-width:9rem">
+                        <option value="status" {% if sort_mode == 'status' %}selected{% endif %}>Status</option>
+                        <option value="title" {% if sort_mode == 'title' %}selected{% endif %}>Titel A->Z</option>
+                        <option value="progress" {% if sort_mode == 'progress' %}selected{% endif %}>Fortschritt %</option>
+                        <option value="created" {% if sort_mode == 'created' %}selected{% endif %}>Erstellungsdatum</option>
+                    </select>
+                </div>
+            </form>
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <span class="small fw-bold">Aufgaben</span>
+                <a href="{% url 'tasks:create' %}?scope={{ active_scope }}" class="btn btn-primary btn-sm"><i class="bi bi-plus-lg"></i> Neu</a>
+            </div>
+            <div id="task-list-container" class="task-tree overflow-auto" style="max-height: calc(100vh - 320px);">
+                {% include "tasks/partials/task_list_left.html" %}
+            </div>
+            <form method="post" action="{% url 'tasks:quick_create' %}" class="mt-2" id="quick-create-form"
+                  hx-post="{% url 'tasks:quick_create' %}"
+                  hx-swap="none"
+                  hx-on::after-request="if(event.detail.successful && event.detail.xhr.responseURL) htmx.find('#detail-pane') && (window.location.href = event.detail.xhr.responseURL)">
+                {% csrf_token %}
+                <input type="hidden" name="scope" value="{{ active_scope }}">
+                <div class="input-group input-group-sm">
+                    <input type="text" name="title" class="form-control" placeholder="Neue Aufgabe..." id="id_quick_title" autocomplete="off">
+                    <button type="submit" class="btn btn-outline-primary">Hinzufügen</button>
+                </div>
+            </form>
+        </div>
+    </aside>
+    <section class="col-md-8 col-lg-8 detail-pane-wrapper p-0">
+        <div id="detail-pane" class="p-4 h-100 min-vh-100"
+             {% if request.GET.task %}
+             hx-get="{% url 'tasks:detail_pane' request.GET.task %}"
+             hx-trigger="load"
+             hx-swap="innerHTML"
+             {% endif %}>
+            {% if not request.GET.task %}
+            <div class="text-body-secondary text-center py-5">
+                <i class="bi bi-arrow-left-circle display-4"></i>
+                <p class="mt-2 mb-0">Aufgabe in der Liste links wählen</p>
+            </div>
+            {% endif %}
+        </div>
+    </section>
+</div>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+.team-scope-tabs .nav-link {
+    border-radius: 0;
+}
+.team-scope-tabs .nav-item {
+    min-width: 0;
+}
+</style>
+{% endblock %}

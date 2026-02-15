@@ -1,0 +1,162 @@
+{% extends "admin/base.html" %}
+
+{% block title %}{% if subtitle %}{{ subtitle }} | {% endif %}TeamToDo Admin{% endblock %}
+
+{% block branding %}
+<div class="teamtodo-admin-brand">
+    <a href="{% url 'admin:index' %}" class="teamtodo-admin-logo">TeamToDo Admin</a>
+</div>
+{% endblock %}
+
+{% block extrastyle %}
+{{ block.super }}
+<style>
+/* Fallback-Theme: funktioniert auch ohne ausgelieferte staticfiles */
+html, body {
+    background: #1b2430 !important;
+    color: #e8edf5 !important;
+    font-family: "Segoe UI", system-ui, sans-serif !important;
+}
+
+a { color: #6ab0ff !important; }
+a:hover { color: #9dcbff !important; }
+
+#header {
+    background: linear-gradient(90deg, #0b121b, #122032) !important;
+    color: #fff !important;
+    border-bottom: 1px solid #304055 !important;
+}
+
+#branding h1, #branding a, .teamtodo-admin-logo {
+    color: #fff !important;
+    text-decoration: none !important;
+    font-weight: 700 !important;
+}
+
+#user-tools, #user-tools a { color: #d7e6ff !important; }
+
+#breadcrumbs, div.breadcrumbs {
+    background: #111a24 !important;
+    color: #c6d6ef !important;
+    border-bottom: 1px solid #304055 !important;
+}
+
+#container, #content, #content-main, .app-auth, .app-tasks,
+.module, .inline-group, .submit-row, .results, .changelist-form-container {
+    background: #1b2430 !important;
+    color: #e8edf5 !important;
+}
+
+.module, .inline-group, fieldset, .aligned fieldset {
+    border: 1px solid #304055 !important;
+    border-radius: 10px !important;
+    background: #1f2a36 !important;
+}
+
+.module h2, .module caption, .inline-group h2 {
+    background: #223246 !important;
+    color: #dceaff !important;
+    border-bottom: 1px solid #304055 !important;
+}
+
+table, thead th, tbody td, tbody th, .row-form-errors {
+    background: transparent !important;
+    color: #e8edf5 !important;
+    border-color: #304055 !important;
+}
+
+thead th {
+    background: #223246 !important;
+    color: #dceaff !important;
+}
+
+tr:nth-child(even) {
+    background: rgba(255,255,255,0.02) !important;
+}
+
+input, select, textarea {
+    background: #111a24 !important;
+    color: #e8edf5 !important;
+    border: 1px solid #3a4c62 !important;
+    border-radius: 8px !important;
+}
+
+select[multiple] {
+    min-height: 18rem !important;
+}
+
+.selector {
+    width: 100% !important;
+}
+
+.selector .selector-available,
+.selector .selector-chosen {
+    width: 48% !important;
+}
+
+.selector select {
+    height: 22rem !important;
+}
+
+input[type=submit], input[type=button], .button, a.button, .submit-row input,
+.object-tools a:link, .object-tools a:visited {
+    background: #0d6efd !important;
+    color: #fff !important;
+    border: 1px solid #2f79eb !important;
+    border-radius: 8px !important;
+}
+
+input[type=submit]:hover, input[type=button]:hover, .button:hover, a.button:hover {
+    background: #2b7dff !important;
+}
+
+.messagelist li {
+    background: #223246 !important;
+    color: #e8edf5 !important;
+    border: 1px solid #304055 !important;
+    border-radius: 8px !important;
+}
+
+/* Bessere Navigation */
+#nav-sidebar {
+    background: #111a24 !important;
+    border-right: 1px solid #304055 !important;
+}
+
+#nav-filter {
+    background: #0f1924 !important;
+    color: #e8edf5 !important;
+    border: 1px solid #304055 !important;
+    border-radius: 8px !important;
+}
+
+/* Theme-Umschalter ausblenden (verhindert defekte Icon-Quadrate) */
+.theme-toggle, .theme-toggle-fieldset {
+    display: none !important;
+}
+</style>
+{% endblock %}
+
+{% block nav-global %}{% endblock %}
+
+{% block extrahead %}
+{{ block.super }}
+<script>
+/* Runtime-Fallback falls Admin-CSS nicht korrekt geladen wird */
+(function() {
+    function forceTheme() {
+        try {
+            document.documentElement.style.background = '#1b2430';
+            document.documentElement.style.color = '#e8edf5';
+            document.body.style.background = '#1b2430';
+            document.body.style.color = '#e8edf5';
+        } catch (e) {}
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', forceTheme);
+    } else {
+        forceTheme();
+    }
+})();
+</script>
+{% endblock %}

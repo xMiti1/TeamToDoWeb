@@ -1,0 +1,253 @@
+﻿{% load tasks_text %}
+<div id="detail-pane-content" class="h-100 d-flex flex-column">
+    <div class="d-flex justify-content-between align-items-start mb-2">
+        <div>
+            <p class="text-body-secondary small mb-0">ID {{ task.pk }} · Version {{ task.version }} · {{ task.created_by.display_name|default:task.created_by.email }} · {{ task.created_at|date:"d.m.Y H:i" }}</p>
+            <h2 class="h5 mb-1 mt-1">{{ task.title }}</h2>
+            <p class="text-body-secondary small mb-0">
+                <span><i class="bi bi-people"></i> {% if task.team %}{{ task.team.name }}{% else %}Privat{% endif %}</span>
+                {% if task.group %}
+                    <span style="color:{% if task.group.parent %}{{ task.group.parent.color }}{% else %}{{ task.group.color }}{% endif %}"><i class="bi bi-folder"></i> {{ task.group.name }}</span>
+                {% endif %}
+                {% if task.due_date %}<i class="bi bi-calendar-event ms-2"></i> {{ task.due_date|date:"d.m.Y" }}{% endif %}
+            </p>
+        </div>
+        {% if can_edit %}
+        <div class="btn-group btn-group-sm">
+            <a href="{% url 'tasks:update' task.pk %}" class="btn btn-outline-primary"><i class="bi bi-pencil"></i></a>
+            <a href="{% url 'tasks:delete' task.pk %}" class="btn btn-outline-danger"><i class="bi bi-trash"></i></a>
+        </div>
+        {% endif %}
+    </div>
+
+    {% if can_edit %}
+    <form method="post"
+          action="{% url 'tasks:quick_update' task.pk %}"
+          hx-post="{% url 'tasks:quick_update' task.pk %}"
+          hx-target="#detail-pane"
+          hx-swap="innerHTML"
+          class="mb-3">
+        {% csrf_token %}
+        <div class="mb-2">
+            <label class="form-label small">Status</label>
+            <select name="status" class="form-select form-select-sm" style="max-width:12rem">
+                <option value="urgent" {% if task.status == 'urgent' %}selected{% endif %}>Dringend</option>
+                <option value="open" {% if task.status == 'open' %}selected{% endif %}>Offen</option>
+                <option value="pause" {% if task.status == 'pause' %}selected{% endif %}>Pausiert</option>
+                <option value="done" {% if task.status == 'done' %}selected{% endif %}>Erledigt</option>
+            </select>
+        </div>
+        <div class="mb-2">
+            <label class="form-label small">Team</label>
+            <select name="team" class="form-select form-select-sm" style="max-width:18rem">
+                <option value="">Privat</option>
+                {% for t in teams %}
+                <option value="{{ t.pk }}" {% if task.team_id == t.pk %}selected{% endif %}>{{ t.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="mb-2">
+            <label class="form-label small">Gruppe</label>
+            <select name="group" class="form-select form-select-sm" style="max-width:18rem">
+                <option value="">Ohne Gruppe</option>
+                {% for g in groups %}
+                <option value="{{ g.pk }}" {% if task.group_id == g.pk %}selected{% endif %}>{{ g.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="mb-2">
+            <label class="form-label small">Fortschritt</label>
+            <div class="d-flex align-items-center gap-2">
+                <div class="segmented-progress" id="progress-wrap" style="--value: {{ task.progress }};">
+                    <div class="segmented-progress__fill" id="progress-fill" style="width: {{ task.progress }}%"></div>
+                    <div class="segmented-progress__ticks"></div>
+                    <input type="range" name="progress" id="progress-slider" value="{{ task.progress }}" min="0" max="100" step="10" class="segmented-progress__input" aria-label="Fortschritt">
+                </div>
+                <span class="small"><span id="progress-val">{{ task.progress }}</span>%</span>
+            </div>
+        </div>
+        <div class="mb-2">
+            <label class="form-label small">Zugewiesen an</label>
+            <div class="border rounded p-2" style="max-height:10rem; overflow:auto;">
+                {% for u in users %}
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" name="assignees" value="{{ u.pk }}" id="assignee-{{ task.pk }}-{{ u.pk }}" {% if u.pk in selected_assignee_ids %}checked{% endif %}>
+                    <label class="form-check-label small" for="assignee-{{ task.pk }}-{{ u.pk }}">{{ u.display_name|default:u.email }}</label>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        <button type="submit" class="btn btn-primary btn-sm">
+            <i class="bi bi-floppy me-1"></i>Speichern
+        </button>
+    </form>
+    {% else %}
+    <p class="small mb-2"><span class="badge bg-secondary">{{ task.get_status_display }}</span></p>
+    <div class="mb-3">
+        <label class="form-label small">Fortschritt</label>
+        <div class="progress" style="height: 1.25rem;">
+            <div class="progress-bar" role="progressbar" style="width: {{ task.progress }}%" aria-valuenow="{{ task.progress }}" aria-valuemin="0" aria-valuemax="100">{{ task.progress }}%</div>
+        </div>
+    </div>
+    <div class="mb-3">
+        <label class="form-label small">Zugewiesen an</label>
+        <p class="small mb-0">{% for a in task.assignees.all %}{{ a.display_name|default:a.email }}{% if not forloop.last %}, {% endif %}{% empty %}—{% endfor %}</p>
+    </div>
+    {% endif %}
+
+    <div class="mb-3">
+        <label class="form-label small">Beschreibung</label>
+        {% if task.description %}
+        <div class="text-body-secondary small mb-2">{{ task.description|render_rich_text }}</div>
+        {% else %}
+        <div class="text-body-secondary small mb-2">Keine Beschreibung hinterlegt.</div>
+        {% endif %}
+
+    </div>
+
+    <hr>
+    <div class="flex-grow-1 overflow-auto">
+        <ul class="nav nav-tabs" id="detail-tabs" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-comments" type="button" role="tab">Kommentare</button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-log" type="button" role="tab">Log</button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-files" type="button" role="tab">Anhänge</button>
+            </li>
+        </ul>
+
+        <div class="tab-content pt-3">
+            <div class="tab-pane fade show active" id="tab-comments" role="tabpanel">
+                <form method="post" action="{% url 'tasks:comment_create' task.pk %}" id="comment-form-pane"
+                      hx-post="{% url 'tasks:comment_create' task.pk %}"
+                      enctype="multipart/form-data"
+                      hx-encoding="multipart/form-data"
+                      hx-target="#comment-list-pane"
+                      hx-swap="beforeend"
+                      hx-on::after-request="if(event.detail.successful) this.reset()">
+                    {% csrf_token %}
+                    <input type="hidden" name="comment_inline_token" value="{{ comment_inline_token }}">
+                    <textarea name="content" class="form-control form-control-sm mb-2" rows="2" placeholder="Kommentar hinzufügen... (Enter = Absenden, Shift+Enter = Zeilenumbruch, Bild: Drag&Drop oder Strg+V)" id="comment-textarea-pane" data-inline-upload-url="{% url 'tasks:inline_upload' task.pk %}" data-inline-kind="comment" data-inline-token="{{ comment_inline_token }}"></textarea>
+                    <input type="file" name="attachments" class="form-control form-control-sm mb-2" multiple data-preview-target="comment-attachment-preview-{{ task.pk }}">
+                    <div id="comment-attachment-preview-{{ task.pk }}" class="d-flex flex-wrap gap-2 mb-2"></div>
+                    <button type="submit" class="btn btn-primary btn-sm">Kommentar hinzufügen</button>
+                </form>
+                <ul class="list-group list-group-flush mt-2" id="comment-list-pane">
+                    {% for comment in comment_items %}
+                    {% include "tasks/partials/comment_item.html" with comment=comment %}
+                    {% empty %}
+                    <li class="list-group-item text-body-secondary small">Noch keine Kommentare.</li>
+                    {% endfor %}
+                </ul>
+            </div>
+
+            <div class="tab-pane fade" id="tab-log" role="tabpanel">
+                <ul class="list-group list-group-flush">
+                    {% for comment in log_items %}
+                    {% include "tasks/partials/comment_item.html" with comment=comment %}
+                    {% empty %}
+                    <li class="list-group-item text-body-secondary small">Noch keine Log-Einträge.</li>
+                    {% endfor %}
+                </ul>
+            </div>
+
+            <div class="tab-pane fade" id="tab-files" role="tabpanel">
+                {% if can_edit %}
+                <form method="post"
+                      enctype="multipart/form-data"
+                      action="{% url 'tasks:attachment_create' task.pk %}"
+                      hx-post="{% url 'tasks:attachment_create' task.pk %}"
+                      hx-encoding="multipart/form-data"
+                      hx-target="#detail-pane"
+                      hx-swap="innerHTML"
+                      class="mb-3">
+                    {% csrf_token %}
+                    <input type="file" name="attachments" class="form-control form-control-sm" multiple data-preview-target="task-attachment-preview-{{ task.pk }}">
+                    <div id="task-attachment-preview-{{ task.pk }}" class="d-flex flex-wrap gap-2 mt-2"></div>
+                    <button type="submit" class="btn btn-outline-primary btn-sm mt-2">Anhänge hochladen</button>
+                </form>
+                {% endif %}
+                <div class="table-responsive">
+                    <table class="table table-sm align-middle">
+                        <thead>
+                            <tr>
+                                <th>Datei</th>
+                                <th>Bereich</th>
+                                <th>Von</th>
+                                <th>Zeit</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for attachment in all_attachments %}
+                            <tr>
+                                <td>
+                                    <a href="{{ attachment.file.url }}" target="_blank">{{ attachment.filename }}</a>
+                                </td>
+                                <td>
+                                    {% if attachment.comment_id %}Kommentar{% elif attachment.target == 'comment' %}Kommentar (inline){% else %}Beschreibung/Aufgabe{% endif %}
+                                </td>
+                                <td>{{ attachment.uploaded_by.display_name|default:attachment.uploaded_by.email|default:'—' }}</td>
+                                <td>{{ attachment.created_at|date:"d.m.Y H:i" }}</td>
+                            </tr>
+                            {% empty %}
+                            <tr><td colspan="4" class="text-body-secondary small">Keine Anhänge vorhanden.</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        <script>
+        (function(){
+            var ta = document.getElementById('comment-textarea-pane');
+            if (ta) ta.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.form.requestSubmit(); }
+            });
+
+            var slider = document.getElementById('progress-slider');
+            var value = document.getElementById('progress-val');
+            var fill = document.getElementById('progress-fill');
+            var wrap = document.getElementById('progress-wrap');
+            if (slider && value && fill) {
+                slider.addEventListener('input', function() {
+                    value.textContent = this.value;
+                    fill.style.width = this.value + '%';
+                    if (wrap) wrap.style.setProperty('--value', this.value);
+                });
+            }
+
+            document.querySelectorAll('input[type="file"][data-preview-target]').forEach(function(input) {
+                input.addEventListener('change', function() {
+                    var targetId = this.getAttribute('data-preview-target');
+                    var target = document.getElementById(targetId);
+                    if (!target) return;
+                    target.innerHTML = '';
+                    Array.from(this.files || []).forEach(function(file) {
+                        var wrap = document.createElement('div');
+                        wrap.className = 'small';
+                        if (file.type && file.type.startsWith('image/')) {
+                            var img = document.createElement('img');
+                            img.className = 'rounded border';
+                            img.style.width = '88px';
+                            img.style.height = '88px';
+                            img.style.objectFit = 'cover';
+                            img.alt = file.name;
+                            img.src = URL.createObjectURL(file);
+                            wrap.appendChild(img);
+                        } else {
+                            var badge = document.createElement('span');
+                            badge.className = 'badge text-bg-light border';
+                            badge.textContent = file.name;
+                            wrap.appendChild(badge);
+                        }
+                        target.appendChild(wrap);
+                    });
+                });
+            });
+        })();
+        </script>
+    </div>
+</div>

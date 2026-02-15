@@ -1,0 +1,31 @@
+{% for group, level, display_color, section_tasks in group_sections %}
+<details class="task-tree-section small" open style="margin-left: {% widthratio level 1 16 %}px;">
+    <summary class="py-1 px-1 rounded d-flex align-items-center gap-1" style="cursor:pointer;">
+        {% if group %}
+            <span class="rounded" style="display:inline-block;width:0.6rem;height:0.6rem;background:{{ display_color|default:'#888' }}"></span>
+            <span style="color:{{ display_color|default:'inherit' }}">{{ group.name }}</span>
+            <a href="{% url 'tasks:create' %}?scope={{ active_scope }}&group={{ group.pk }}" class="ms-auto btn btn-link btn-sm py-0 px-1 text-decoration-none" title="Neue Aufgabe in dieser Gruppe">+</a>
+        {% else %}
+            <span class="text-body-secondary">Ohne Gruppe</span>
+        {% endif %}
+    </summary>
+    <div class="ps-2">
+        {% for task in section_tasks %}
+        <div class="task-tree-task py-1 border-start border-2 task-status-{{ task.status }} {% if task.status == 'done' %}task-done text-body-secondary{% endif %}"
+             style="border-color: {{ display_color|default:'#dee2e6' }} !important;">
+            <a href="#" class="text-decoration-none text-body d-block"
+               hx-get="{% url 'tasks:detail_pane' task.pk %}"
+               hx-target="#detail-pane"
+               hx-swap="innerHTML"
+               hx-push-url="{% url 'tasks:dashboard' %}?scope={{ active_scope }}&task={{ task.pk }}">
+                <span class="badge text-bg-secondary me-1">{{ task.get_status_display }}</span>
+                <span class="small">({{ task.progress }}%)</span>
+                {{ task.title }}
+            </a>
+        </div>
+        {% endfor %}
+    </div>
+</details>
+{% empty %}
+<p class="small text-body-secondary mb-0">Keine Aufgaben. <a href="{% url 'tasks:create' %}">Neue Aufgabe</a> oder unten eingeben.</p>
+{% endfor %}

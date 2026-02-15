@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+*.sqlite3
+.env
+venv/
+.venv/
+staticfiles/
+media/
+.cursor/
+OLD_TeamToDo_Desktop/
+gunicorn.ctl
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/

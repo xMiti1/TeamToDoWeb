@@ -1,0 +1,159 @@
+:root {
+    --primary: #0d6efd;
+    --secondary: #1f2a36;
+    --accent: #3f8cff;
+    --header-bg: #0b121b;
+    --header-link-color: #d7e6ff;
+    --breadcrumbs-bg: #111a24;
+    --body-bg: #1b2430;
+    --body-fg: #e8edf5;
+    --link-fg: #6ab0ff;
+    --link-hover-color: #9dcbff;
+    --hairline-color: #304055;
+    --border-color: #304055;
+    --selected-bg: #24364d;
+    --selected-row: #25374d;
+    --button-bg: #0d6efd;
+    --button-hover-bg: #2b7dff;
+    --default-button-bg: #0d6efd;
+    --default-button-hover-bg: #2b7dff;
+}
+
+body,
+#container,
+#content,
+.module,
+.inline-group,
+.submit-row {
+    background: var(--body-bg) !important;
+    color: var(--body-fg);
+}
+
+#header {
+    background: linear-gradient(90deg, #0b121b, #122032);
+    color: #fff;
+}
+
+#branding h1,
+#branding a,
+.teamtodo-admin-logo {
+    color: #fff !important;
+    text-decoration: none;
+    font-weight: 700;
+}
+
+#user-tools a {
+    color: var(--header-link-color);
+}
+
+#breadcrumbs {
+    background: var(--breadcrumbs-bg);
+    border-bottom: 1px solid var(--hairline-color);
+    color: #c6d6ef;
+}
+
+#breadcrumbs a {
+    color: #8fc0ff;
+}
+
+.module,
+.inline-group {
+    border: 1px solid var(--hairline-color);
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+.module h2,
+.module caption,
+.inline-group h2 {
+    background: #223246;
+    color: #dceaff;
+    border-bottom: 1px solid var(--hairline-color);
+}
+
+table thead th {
+    background: #223246 !important;
+    color: #dceaff !important;
+}
+
+tr:nth-child(even) {
+    background: rgba(255, 255, 255, 0.02);
+}
+
+a:link,
+a:visited {
+    color: var(--link-fg);
+}
+
+a:hover {
+    color: var(--link-hover-color);
+}
+
+input,
+select,
+textarea {
+    background: #111a24 !important;
+    color: #e8edf5 !important;
+    border: 1px solid #3a4c62 !important;
+    border-radius: 8px !important;
+}
+
+select[multiple] {
+    min-height: 18rem !important;
+}
+
+.selector {
+    width: 100% !important;
+}
+
+.selector .selector-available,
+.selector .selector-chosen {
+    width: 48% !important;
+}
+
+.selector select {
+    height: 22rem !important;
+}
+
+.button,
+input[type=submit],
+input[type=button],
+.submit-row input,
+a.button,
+.button.default,
+input[type=submit].default {
+    background: var(--button-bg) !important;
+    border: 1px solid #2f79eb !important;
+    color: #fff !important;
+    border-radius: 8px !important;
+}
+
+.button:hover,
+input[type=submit]:hover,
+input[type=button]:hover,
+.submit-row input:hover,
+a.button:hover {
+    background: var(--button-hover-bg) !important;
+}
+
+.object-tools a:link,
+.object-tools a:visited {
+    background: #0d6efd;
+    color: #fff;
+    border-radius: 8px;
+}
+
+div.breadcrumbs {
+    background: var(--breadcrumbs-bg);
+}
+
+.messagelist .success,
+.messagelist .warning,
+.messagelist .error,
+ul.messagelist li {
+    border-radius: 8px;
+}
+
+.selector .selector-filter {
+    border-bottom: 1px solid var(--hairline-color);
+}

@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="de" data-bs-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token }}">
+    <title>{% block title %}TeamToDo{% endblock %}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <style>
+        :root { --bs-body-font-family: 'Segoe UI', system-ui, sans-serif; }
+        .task-status-urgent { border-left: 4px solid #dc3545; }
+        .task-status-open { border-left: 4px solid #0d6efd; }
+        .task-status-pause { border-left: 4px solid #ffc107; }
+        .task-status-done { border-left: 4px solid #198754; }
+        .task-done { opacity: 0.7; text-decoration: line-through; }
+        [data-bs-theme=dark] .task-sidebar { background-color: var(--bs-dark) !important; }
+        [data-bs-theme=dark] .task-sidebar .form-control, [data-bs-theme=dark] .task-sidebar .input-group-text { background: var(--bs-body-bg); }
+        .dashboard-layout { min-height: calc(100vh - 56px); }
+        .task-tree-task a:hover { background: var(--bs-secondary-bg); }
+        .comment-system .comment-content { font-style: italic; opacity: 0.9; }
+        .segmented-progress {
+            position: relative;
+            height: 1.4rem;
+            width: 100%;
+            border-radius: 999px;
+            background: #26313f;
+            overflow: hidden;
+        }
+        .segmented-progress__fill {
+            position: absolute;
+            inset: 0 auto 0 0;
+            width: 0%;
+            background: linear-gradient(90deg, #0d6efd, #3f8cff);
+            border-radius: 999px 0 0 999px;
+        }
+        .segmented-progress__ticks {
+            position: absolute;
+            inset: 0;
+            background: repeating-linear-gradient(
+                to right,
+                transparent 0,
+                transparent calc(10% - 1px),
+                rgba(255, 255, 255, 0.55) calc(10% - 1px),
+                rgba(255, 255, 255, 0.55) 10%
+            );
+            pointer-events: none;
+        }
+        .segmented-progress__input {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            opacity: 0;
+            cursor: pointer;
+        }
+        .progress-step-range {
+            width: 100%;
+        }
+        textarea.drag-over {
+            outline: 2px dashed var(--bs-primary);
+            outline-offset: 2px;
+        }
+    </style>
+    {% block extra_css %}{% endblock %}
+</head>
+<body class="min-vh-100">
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+        <div class="container">
+            <a class="navbar-brand" href="{% url 'tasks:dashboard' %}"><i class="bi bi-check2-square me-1"></i>TeamToDo</a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav ms-auto align-items-center">
+                    {% if user.is_authenticated %}
+                        <li class="nav-item">
+                            <a class="nav-link" href="{% url 'tasks:dashboard' %}">Dashboard</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="{% url 'tasks:create' %}">Neue Aufgabe</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="{% url 'tasks:group_list' %}">Gruppen</a>
+                        </li>
+                        <li class="nav-item">
+                            <button type="button" class="btn btn-link nav-link py-2" id="theme-toggle" title="Dark Mode umschalten" aria-label="Theme umschalten">
+                                <i class="bi bi-moon-stars" id="theme-icon-dark"></i>
+                                <i class="bi bi-sun" id="theme-icon-light" class="d-none"></i>
+                            </button>
+                        </li>
+                        <li class="nav-item dropdown">
+                            <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">{{ user.display_name|default:user.email }}</a>
+                            <ul class="dropdown-menu dropdown-menu-end">
+                                <li><a class="dropdown-item" href="{% url 'accounts:settings' %}"><i class="bi bi-gear me-1"></i>Einstellungen</a></li>
+                                <li><hr class="dropdown-divider"></li>
+                                <li><a class="dropdown-item" href="{% url 'tasks:export_csv' %}"><i class="bi bi-file-earmark-spreadsheet me-1"></i>Export CSV</a></li>
+                                <li><a class="dropdown-item" href="{% url 'tasks:export_json' %}"><i class="bi bi-file-earmark-code me-1"></i>Export JSON</a></li>
+                                <li><hr class="dropdown-divider"></li>
+                                <li><a class="dropdown-item" href="{% url 'accounts:logout' %}">Abmelden</a></li>
+                            </ul>
+                        </li>
+                    {% else %}
+                        <li class="nav-item"><a class="nav-link" href="{% url 'accounts:login' %}">Anmelden</a></li>
+                    {% endif %}
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <main class="{% block main_class %}container py-4{% endblock %}">
+        {% if messages %}
+            {% for message in messages %}
+                <div class="alert alert-{{ message.tags }} alert-dismissible fade show" role="alert">
+                    {{ message }}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                </div>
+            {% endfor %}
+        {% endif %}
+        {% block content %}{% endblock %}
+    </main>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+    document.body.addEventListener('htmx:configRequest', function(ev) {
+        var t = document.querySelector('[name=csrfmiddlewaretoken]')?.value || document.querySelector('meta[name=csrf-token]')?.content;
+        if (t) ev.detail.headers['X-CSRFToken'] = t;
+        if (ev.detail.target && ev.detail.target.id) ev.detail.headers['HX-Target'] = ev.detail.target.id;
+    });
+    (function() {
+        var theme = localStorage.getItem('theme') || 'light';
+        document.documentElement.setAttribute('data-bs-theme', theme);
+        var btn = document.getElementById('theme-toggle');
+        var iconDark = document.getElementById('theme-icon-dark');
+        var iconLight = document.getElementById('theme-icon-light');
+        if (btn && iconDark && iconLight) {
+            if (theme === 'dark') { iconDark.classList.add('d-none'); iconLight.classList.remove('d-none'); }
+            btn.addEventListener('click', function() {
+                var next = document.documentElement.getAttribute('data-bs-theme') === 'dark' ? 'light' : 'dark';
+                document.documentElement.setAttribute('data-bs-theme', next);
+                localStorage.setItem('theme', next);
+                if (next === 'dark') { iconDark.classList.add('d-none'); iconLight.classList.remove('d-none'); }
+                else { iconDark.classList.remove('d-none'); iconLight.classList.add('d-none'); }
+            });
+        }
+    })();
+
+    (function () {
+        function csrfToken() {
+            return document.querySelector('[name=csrfmiddlewaretoken]')?.value || document.querySelector('meta[name=csrf-token]')?.content || '';
+        }
+
+        function insertAtCursor(el, text) {
+            var start = el.selectionStart ?? el.value.length;
+            var end = el.selectionEnd ?? el.value.length;
+            var before = el.value.substring(0, start);
+            var after = el.value.substring(end);
+            el.value = before + text + after;
+            var pos = before.length + text.length;
+            el.selectionStart = pos;
+            el.selectionEnd = pos;
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+
+        async function uploadInlineFile(uploadUrl, file, kind, inlineToken) {
+            var fd = new FormData();
+            fd.append('file', file);
+            if (kind) fd.append('kind', kind);
+            if (inlineToken) fd.append('inline_token', inlineToken);
+            var res = await fetch(uploadUrl, {
+                method: 'POST',
+                headers: { 'X-CSRFToken': csrfToken() },
+                body: fd
+            });
+            if (!res.ok) throw new Error('upload_failed');
+            return await res.json();
+        }
+
+        function bindInlineUpload(textarea) {
+            if (!textarea || textarea.dataset.inlineBound === '1') return;
+            var uploadUrl = textarea.dataset.inlineUploadUrl;
+            var uploadKind = textarea.dataset.inlineKind || 'task';
+            var inlineToken = textarea.dataset.inlineToken || '';
+            if (!uploadUrl) return;
+            textarea.dataset.inlineBound = '1';
+
+            async function handleFiles(files) {
+                var list = Array.from(files || []);
+                for (var i = 0; i < list.length; i++) {
+                    var file = list[i];
+                    var data = await uploadInlineFile(uploadUrl, file, uploadKind, inlineToken);
+                    insertAtCursor(textarea, (textarea.value && !textarea.value.endsWith('\n') ? '\n' : '') + (data.snippet || '') + '\n');
+                }
+            }
+
+            textarea.addEventListener('paste', function (e) {
+                var files = Array.from(e.clipboardData?.items || [])
+                    .filter(function (item) { return item.kind === 'file'; })
+                    .map(function (item) { return item.getAsFile(); })
+                    .filter(Boolean);
+                if (!files.length) return;
+                e.preventDefault();
+                handleFiles(files).catch(function () {});
+            });
+
+            textarea.addEventListener('dragover', function (e) {
+                e.preventDefault();
+                textarea.classList.add('drag-over');
+            });
+            textarea.addEventListener('dragleave', function () {
+                textarea.classList.remove('drag-over');
+            });
+            textarea.addEventListener('drop', function (e) {
+                e.preventDefault();
+                textarea.classList.remove('drag-over');
+                var files = Array.from(e.dataTransfer?.files || []);
+                if (!files.length) return;
+                handleFiles(files).catch(function () {});
+            });
+        }
+
+        function initInlineUploads(scope) {
+            (scope || document).querySelectorAll('textarea[data-inline-upload-url]').forEach(bindInlineUpload);
+        }
+
+        document.addEventListener('DOMContentLoaded', function () { initInlineUploads(document); });
+        document.body.addEventListener('htmx:afterSwap', function (e) { initInlineUploads(e.target); });
+    })();
+    </script>
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

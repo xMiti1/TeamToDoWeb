@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Aufgabe löschen – TeamToDo{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-6">
+        <div class="card shadow border-danger">
+            <div class="card-body p-4">
+                <h2 class="card-title text-danger mb-3"><i class="bi bi-exclamation-triangle me-2"></i>Aufgabe löschen</h2>
+                <p class="mb-4">Möchten Sie die Aufgabe <strong>«{{ task.title }}»</strong> wirklich löschen? Diese Aktion kann nicht rückgängig gemacht werden.</p>
+                <form method="post">
+                    {% csrf_token %}
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-danger">Löschen</button>
+                        <a href="{% url 'tasks:dashboard' %}" class="btn btn-outline-secondary">Abbrechen</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

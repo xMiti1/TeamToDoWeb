@@ -1,0 +1,81 @@
+﻿{% extends "base.html" %}
+{% load tasks_text %}
+{% block title %}{{ task.title }} - TeamToDo{% endblock %}
+
+{% block content %}
+<div class="card shadow mb-4">
+    <div class="card-body">
+        <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
+            <div>
+                <h1 class="h4 mb-1">{{ task.title }}</h1>
+                <p class="text-muted small mb-0">
+                    <span class="badge bg-secondary">{{ task.get_status_display }}</span>
+                    {% if task.due_date %}<i class="bi bi-calendar-event ms-2"></i> {{ task.due_date|date:"d.m.Y" }}{% endif %}
+                    {% if task.group %}<span class="ms-2" style="color:{{ task.group.color }}"><i class="bi bi-folder"></i> {{ task.group.name }}</span>{% endif %}
+                    Erstellt von {{ task.created_by.display_name|default:task.created_by.email }}
+                    {% if task.updated_by %} - Geändert von {{ task.updated_by.display_name|default:task.updated_by.email }}{% endif %}
+                </p>
+            </div>
+            {% if can_edit %}
+            <div class="btn-group">
+                <a href="{% url 'tasks:update' task.pk %}" class="btn btn-outline-primary"><i class="bi bi-pencil"></i> Bearbeiten</a>
+                <a href="{% url 'tasks:delete' task.pk %}" class="btn btn-outline-danger"><i class="bi bi-trash"></i> Löschen</a>
+            </div>
+            {% endif %}
+        </div>
+        <p class="mt-2 mb-0"><strong>Fortschritt:</strong> {{ task.progress }}%</p>
+        {% if task.assignees.exists %}
+            <p class="mb-0"><strong>Zugewiesen an:</strong> {% for a in task.assignees.all %}{{ a.display_name|default:a.email }}{% if not forloop.last %}, {% endif %}{% endfor %}</p>
+        {% endif %}
+        {% if task.description %}
+            <hr>
+            <div class="text-muted">{{ task.description|render_rich_text }}</div>
+        {% endif %}
+    </div>
+</div>
+
+<div class="card shadow">
+    <div class="card-header">
+        <ul class="nav nav-tabs card-header-tabs mb-0">
+            <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#detail-comments" type="button">Kommentare</button></li>
+            <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#detail-log" type="button">Log</button></li>
+        </ul>
+    </div>
+    <div class="card-body">
+        <div class="tab-content">
+            <div class="tab-pane fade show active" id="detail-comments">
+                <form method="post" action="{% url 'tasks:comment_create' task.pk %}" id="comment-form"
+                      hx-post="{% url 'tasks:comment_create' task.pk %}"
+                      enctype="multipart/form-data"
+                      hx-encoding="multipart/form-data"
+                      hx-target="#comment-list"
+                      hx-swap="beforeend"
+                      hx-on::after-request="if(event.detail.successful) this.reset()">
+                    {% csrf_token %}
+                    <input type="hidden" name="comment_inline_token" value="{{ comment_inline_token }}">
+                    <textarea name="content" class="form-control form-control-sm mb-2" rows="2" data-inline-upload-url="{% url 'tasks:inline_upload' task.pk %}" data-inline-kind="comment" data-inline-token="{{ comment_inline_token }}"></textarea>
+                    <input type="file" name="attachments" class="form-control form-control-sm mb-2" multiple>
+                    <button type="submit" class="btn btn-primary btn-sm mt-2">Kommentar hinzufügen</button>
+                </form>
+                <ul class="list-group list-group-flush mt-3" id="comment-list">
+                    {% for comment in comment_items %}
+                        {% include "tasks/partials/comment_item.html" with comment=comment %}
+                    {% empty %}
+                        <li class="list-group-item text-body-secondary small">Noch keine Kommentare.</li>
+                    {% endfor %}
+                </ul>
+            </div>
+            <div class="tab-pane fade" id="detail-log">
+                <ul class="list-group list-group-flush">
+                    {% for comment in log_items %}
+                        {% include "tasks/partials/comment_item.html" with comment=comment %}
+                    {% empty %}
+                        <li class="list-group-item text-body-secondary small">Noch keine Log-Einträge.</li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+<p class="mt-2"><a href="{% url 'tasks:dashboard' %}">&larr; Zurück zum Dashboard</a></p>
+{% endblock %}

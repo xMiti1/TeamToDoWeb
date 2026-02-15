@@ -1,0 +1,24 @@
+﻿{% extends "admin/base_site.html" %}
+{% load i18n static %}
+
+{% block content %}
+<div id="content-main">
+    <div class="module">
+        <h2>Schnellzugriff</h2>
+        <div style="padding: 12px 14px; display:flex; gap:10px; flex-wrap:wrap;">
+            <a class="button" href="{% url 'tasks:dashboard' %}">Zum Dashboard</a>
+            <a class="button" href="{% url 'admin:tasks_task_changelist' %}">Aufgaben verwalten</a>
+            <a class="button" href="{% url 'admin:tasks_team_changelist' %}">Teams verwalten</a>
+            <a class="button" href="{% url 'admin:tasks_group_changelist' %}">Gruppen verwalten</a>
+            <a class="button" href="{% url 'admin:accounts_user_changelist' %}">Benutzer verwalten</a>
+            <a class="button" href="{% url 'admin:tasks_attachment_changelist' %}">Anhaenge verwalten</a>
+        </div>
+    </div>
+
+    {% if app_list %}
+        {% include "admin/app_list.html" with app_list=app_list show_changelinks=True %}
+    {% else %}
+        <p>{% translate "You don't have permission to view or edit anything." %}</p>
+    {% endif %}
+</div>
+{% endblock %}

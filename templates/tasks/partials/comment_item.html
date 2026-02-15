@@ -1,0 +1,28 @@
+{% load tasks_text %}
+<li class="list-group-item comment-item {% if comment.is_system %}comment-system{% endif %}" id="comment-{{ comment.pk }}">
+    <strong {% if comment.author and comment.author.color %}style="color:{{ comment.author.color }}"{% endif %}>
+        {% if comment.author %}{{ comment.author.display_name|default:comment.author.email }}{% else %}SYSTEM{% endif %}
+    </strong>
+    <span class="text-muted small"> · {{ comment.created_at|date:"d.m.Y H:i" }}</span>
+    {% if not comment.is_system and comment.author_id == user.id %}
+    <span class="float-end">
+        <button type="button" class="btn btn-link btn-sm py-0 px-1" data-bs-toggle="collapse" data-bs-target="#edit-comment-{{ comment.pk }}" aria-expanded="false">Bearbeiten</button>
+        <form method="post" action="{% url 'tasks:comment_delete' comment.pk %}" class="d-inline"
+              hx-post="{% url 'tasks:comment_delete' comment.pk %}"
+              hx-target="#comment-{{ comment.pk }}"
+              hx-swap="outerHTML"
+              hx-on::before-request="if(!confirm('Kommentar löschen?')) event.preventDefault()">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-link btn-sm py-0 px-1 text-danger">Löschen</button>
+        </form>
+    </span>
+    {% endif %}
+    <div id="edit-comment-{{ comment.pk }}" class="collapse mt-2">
+        <form method="post" action="{% url 'tasks:comment_edit' comment.pk %}" hx-post="{% url 'tasks:comment_edit' comment.pk %}" hx-target="#comment-{{ comment.pk }}" hx-swap="outerHTML">
+            {% csrf_token %}
+            <textarea name="content" class="form-control form-control-sm mb-1" rows="2">{{ comment.content }}</textarea>
+            <button type="submit" class="btn btn-sm btn-primary">Speichern</button>
+        </form>
+    </div>
+    <p class="mb-0 mt-1 comment-content">{{ comment.content|render_rich_text }}</p>
+</li>
