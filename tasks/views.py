@@ -22,13 +22,15 @@ from django.core.files import File
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import mm
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image as RLImage
 
 from .models import Task, Group, Comment, ChangeLog, Attachment, Team
 from .forms import TaskForm, GroupForm, CommentForm
 
 User = get_user_model()
 DESKTOP_IMAGE_TAG_RE = re.compile(r"\[\[image:([a-zA-Z0-9_-]+)\]\]")
+PDF_MD_IMAGE_RE = re.compile(r'!\[([^\]]*)\]\(([^)]+)\)')
+PDF_ATTACHMENT_URL_RE = re.compile(r'/tasks/attachments/(?P<id>\d+)/file/?')
 
 
 def _log_change(request, entity_type, entity_id, action, field=None, old_value=None, new_value=None):
@@ -1020,7 +1022,50 @@ def _build_pdf_response(title, story):
     return response
 
 
-def _build_task_story(tasks, comments_by_task):
+def _build_pdf_rich_text_blocks(text_value, body_style, attachment_by_id):
+    text = (text_value or '').replace('\r\n', '\n').replace('\r', '\n')
+    if not text.strip():
+        return [Paragraph('-', body_style)]
+
+    flowables = []
+    for raw_line in text.split('\n'):
+        line = raw_line.strip()
+        if not line:
+            flowables.append(Spacer(1, 2))
+            continue
+
+        m = PDF_MD_IMAGE_RE.fullmatch(line)
+        if m:
+            image_url = m.group(2).strip()
+            match = PDF_ATTACHMENT_URL_RE.search(image_url)
+            attachment = None
+            if match:
+                try:
+                    attachment = attachment_by_id.get(int(match.group('id')))
+                except (TypeError, ValueError):
+                    attachment = None
+            if attachment and attachment.file:
+                try:
+                    image_path = attachment.file.path
+                    if os.path.exists(image_path):
+                        img = RLImage(image_path)
+                        max_w = 170 * mm
+                        max_h = 110 * mm
+                        if img.imageWidth and img.imageHeight:
+                            scale = min(max_w / float(img.imageWidth), max_h / float(img.imageHeight), 1.0)
+                            img.drawWidth = float(img.imageWidth) * scale
+                            img.drawHeight = float(img.imageHeight) * scale
+                        flowables.append(img)
+                        flowables.append(Spacer(1, 3))
+                        continue
+                except Exception:
+                    pass
+
+        flowables.append(Paragraph(_pdf_escape(raw_line), body_style))
+    return flowables
+
+
+def _build_task_story(tasks, comments_by_task, attachment_by_id):
     styles = getSampleStyleSheet()
     body = styles['BodyText']
     body.spaceAfter = 4
@@ -1040,7 +1085,8 @@ def _build_task_story(tasks, comments_by_task):
         story.append(Spacer(1, 4))
 
         description = task.description.strip() if task.description else ''
-        story.append(Paragraph(f'<b>Beschreibung</b><br/>{_pdf_escape(description) or "-"}', body))
+        story.append(Paragraph('<b>Beschreibung</b>', body))
+        story.extend(_build_pdf_rich_text_blocks(description, body, attachment_by_id))
         story.append(Spacer(1, 4))
 
         task_comments = comments_by_task.get(task.id, [])
@@ -1057,7 +1103,7 @@ def _build_task_story(tasks, comments_by_task):
                     author_label = 'Unbekannt'
                 stamp = _format_dt_for_pdf(comment.created_at)
                 story.append(Paragraph(f'<b>{_pdf_escape(author_label)}</b> ({stamp})', meta))
-                story.append(Paragraph(_pdf_escape(comment.content), body))
+                story.extend(_build_pdf_rich_text_blocks(comment.content, body, attachment_by_id))
                 story.append(Spacer(1, 2))
 
         if index < len(tasks) - 1:
@@ -1118,9 +1164,13 @@ class TaskExportPDFView(LoginRequiredMixin, View):
         comments_by_task = {}
         for comment in comments:
             comments_by_task.setdefault(comment.task_id, []).append(comment)
+        attachment_by_id = {
+            a.pk: a
+            for a in Attachment.objects.filter(task__in=tasks).only('id', 'file', 'original_name')
+        }
 
         story = [Paragraph(_pdf_escape('TeamToDo Export'), getSampleStyleSheet()['Heading1']), Spacer(1, 8)]
-        story.extend(_build_task_story(tasks, comments_by_task))
+        story.extend(_build_task_story(tasks, comments_by_task, attachment_by_id))
         return _build_pdf_response(title, story)
 
 
