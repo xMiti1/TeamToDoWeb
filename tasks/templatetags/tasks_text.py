@@ -12,7 +12,7 @@ LINK_RE = re.compile(r'\[([^\]]+)\]\(([^)]+)\)')
 
 def _safe_url(url):
     url = (url or '').strip()
-    if url.startswith('/media/') or url.startswith('http://') or url.startswith('https://'):
+    if url.startswith('/media/') or url.startswith('/tasks/') or url.startswith('http://') or url.startswith('https://'):
         return url
     return '#'
 

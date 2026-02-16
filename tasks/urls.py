@@ -18,6 +18,7 @@ urlpatterns = [
     path('<int:pk>/progress/', views.TaskProgressUpdateView.as_view(), name='update_progress'),
     path('<int:pk>/assignees/', views.TaskAssigneesUpdateView.as_view(), name='update_assignees'),
     path('<int:pk>/attachments/', views.TaskAttachmentCreateView.as_view(), name='attachment_create'),
+    path('attachments/<int:pk>/file/', views.TaskAttachmentFileView.as_view(), name='attachment_file'),
     path('export/pdf/', views.TaskExportPDFView.as_view(), name='export_pdf'),
     path('import/desktop-db/', views.DesktopDatabaseImportView.as_view(), name='import_desktop_db'),
     # Groups

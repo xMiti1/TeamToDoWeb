@@ -184,7 +184,7 @@
                             {% for attachment in all_attachments %}
                             <tr>
                                 <td>
-                                    <a href="{{ attachment.file.url }}" target="_blank">{{ attachment.filename }}</a>
+                                    <a href="{% url 'tasks:attachment_file' attachment.pk %}" target="_blank">{{ attachment.filename }}</a>
                                 </td>
                                 <td>
                                     {% if attachment.comment_id %}Kommentar{% elif attachment.target == 'comment' %}Kommentar (inline){% else %}Beschreibung/Aufgabe{% endif %}

@@ -4,7 +4,7 @@ from django.views.generic import ListView, CreateView, UpdateView, DeleteView, D
 from django.urls import reverse_lazy, reverse
 from django.db import transaction
 from django.db.models import Q, Case, When, Value, IntegerField
-from django.http import HttpResponse, JsonResponse, Http404
+from django.http import HttpResponse, JsonResponse, Http404, FileResponse
 from django.views import View
 from django.utils import timezone
 from django.utils.html import escape
@@ -45,6 +45,10 @@ def _log_change(request, entity_type, entity_id, action, field=None, old_value=N
 
 def _add_system_comment(task, content):
     Comment.objects.create(task=task, author=None, content=content, is_system=True)
+
+
+def _attachment_access_url(attachment):
+    return reverse('tasks:attachment_file', args=[attachment.pk])
 
 
 def _task_queryset_visible_to(user):
@@ -571,7 +575,7 @@ class TaskInlineUploadView(LoginRequiredMixin, View):
         )
         is_image = attachment.is_image
         name = attachment.filename
-        url = attachment.file.url
+        url = _attachment_access_url(attachment)
         snippet = f'![{name}]({url})' if is_image else f'[{name}]({url})'
         return JsonResponse({
             'ok': True,
@@ -811,6 +815,23 @@ class TaskAttachmentCreateView(LoginRequiredMixin, View):
         if request.headers.get('HX-Request'):
             return _render_detail_pane(request, task)
         return redirect('tasks:dashboard')
+
+
+class TaskAttachmentFileView(LoginRequiredMixin, View):
+    """Serve attachment files via authenticated app route (works without direct /media reverse-proxy mapping)."""
+    def get(self, request, pk):
+        attachment = get_object_or_404(Attachment.objects.select_related('task'), pk=pk)
+        if not _task_queryset_visible_to(request.user).filter(pk=attachment.task_id).exists():
+            raise Http404
+        if not attachment.file:
+            raise Http404
+        try:
+            fh = attachment.file.open('rb')
+        except FileNotFoundError:
+            raise Http404
+        response = FileResponse(fh)
+        response['Content-Disposition'] = f'inline; filename="{attachment.filename}"'
+        return response
 
 
 # --- Comments ---
@@ -1363,7 +1384,7 @@ class DesktopDatabaseImportView(LoginRequiredMixin, UserPassesTestMixin, View):
             if not attachment:
                 return match.group(0)
             label = attachment.filename
-            url = attachment.file.url
+            url = _attachment_access_url(attachment)
             if attachment.is_image:
                 return f'![{label}]({url})'
             return f'[{label}]({url})'
@@ -1584,7 +1605,7 @@ class DesktopDatabaseImportView(LoginRequiredMixin, UserPassesTestMixin, View):
                     if created_by_user:
                         mapped_users_to_add.add(created_by_user.pk)
                     original_name = _safe_text(arow['original_name'], '') or os.path.basename(source_file_name) or os.path.basename(source_path)
-                    storage_name = os.path.basename(original_name) or os.path.basename(source_path)
+                    storage_name = os.path.basename(source_file_name) or os.path.basename(source_path) or f'attachment_{arow["id"]}'
                     with open(source_path, 'rb') as fh:
                         att = Attachment(
                             task=task_obj,
