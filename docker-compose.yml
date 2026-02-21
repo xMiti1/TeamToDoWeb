@@ -36,6 +36,9 @@ services:
       SERVE_MEDIA: ${SERVE_MEDIA:-True}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      WEBPUSH_VAPID_PUBLIC_KEY: ${WEBPUSH_VAPID_PUBLIC_KEY:-}
+      WEBPUSH_VAPID_PRIVATE_KEY: ${WEBPUSH_VAPID_PRIVATE_KEY:-}
+      WEBPUSH_VAPID_CLAIMS_SUB: ${WEBPUSH_VAPID_CLAIMS_SUB:-mailto:admin@example.com}
     depends_on:
       db:
         condition: service_healthy
