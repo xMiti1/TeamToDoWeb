@@ -99,3 +99,79 @@
 }
 </style>
 {% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+    var dashboardUrl = "{% url 'tasks:dashboard' %}";
+    var unreadPollUrl = "{% url 'tasks:unread_poll' %}";
+
+    function refreshTaskList() {
+        var form = document.getElementById('filter-form');
+        if (!form || !window.htmx) return;
+        var values = {};
+        new FormData(form).forEach(function (v, k) { values[k] = v; });
+        htmx.ajax('GET', dashboardUrl + '?partial=tasklist', {
+            target: '#task-list-container',
+            swap: 'innerHTML',
+            values: values
+        });
+    }
+
+    document.body.addEventListener('htmx:afterSwap', function (event) {
+        var target = event.detail && event.detail.target;
+        if (target && target.id === 'detail-pane') {
+            refreshTaskList();
+        }
+    });
+
+    var knownUnreadIds = new Set();
+    var pollInitialized = false;
+
+    function maybeNotify(items) {
+        if (!('Notification' in window) || Notification.permission !== 'granted') return;
+        if (!document.hidden) return;
+        items.forEach(function (item) {
+            if (item.is_mine) return;
+            var n = new Notification('Neue Aufgabe verfuegbar', {
+                body: item.title
+            });
+            n.onclick = function () {
+                var scope = document.querySelector('#filter-form [name=scope]')?.value || '';
+                var targetUrl = dashboardUrl + '?task=' + item.id;
+                if (scope) targetUrl = dashboardUrl + '?scope=' + encodeURIComponent(scope) + '&task=' + item.id;
+                window.focus();
+                window.location.href = targetUrl;
+            };
+        });
+    }
+
+    function pollUnreadTasks() {
+        fetch(unreadPollUrl, { credentials: 'same-origin' })
+            .then(function (res) { return res.ok ? res.json() : null; })
+            .then(function (data) {
+                if (!data || !Array.isArray(data.items)) return;
+                var newItems = [];
+                data.items.forEach(function (item) {
+                    if (!knownUnreadIds.has(item.id)) {
+                        if (pollInitialized) newItems.push(item);
+                        knownUnreadIds.add(item.id);
+                    }
+                });
+                pollInitialized = true;
+                if (newItems.length > 0) {
+                    maybeNotify(newItems);
+                    refreshTaskList();
+                }
+            })
+            .catch(function () {});
+    }
+
+    if ('Notification' in window && Notification.permission === 'default') {
+        setTimeout(function () { Notification.requestPermission().catch(function () {}); }, 1500);
+    }
+    pollUnreadTasks();
+    window.setInterval(pollUnreadTasks, 15000);
+})();
+</script>
+{% endblock %}

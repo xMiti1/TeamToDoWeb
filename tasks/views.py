@@ -77,6 +77,17 @@ def _mark_task_as_read(task, user):
     return created
 
 
+def _unread_tasks_queryset_for(user):
+    return (
+        _task_queryset_visible_to(user)
+        .filter(is_unread_tracking_enabled=True)
+        .exclude(read_states__user=user)
+        .select_related('created_by', 'team')
+        .order_by('-created_at', '-id')
+        .distinct()
+    )
+
+
 def _normalize_progress(raw_value, default=0):
     try:
         progress = int(raw_value)
@@ -221,7 +232,7 @@ class TaskDashboardView(LoginRequiredMixin, ListView):
             qs = qs.filter(assignees=self.request.user, team__isnull=False)
         read_state = self.request.GET.get('read_state', 'all')
         if read_state == 'unread':
-            qs = qs.filter(is_unread_tracking_enabled=True).exclude(read_states__user=self.request.user)
+            qs = _unread_tasks_queryset_for(self.request.user).filter(pk__in=qs.values('pk'))
         group_id = self.request.GET.get('group')
         if group_id:
             try:
@@ -843,6 +854,26 @@ class TaskAttachmentCreateView(LoginRequiredMixin, View):
         if request.headers.get('HX-Request'):
             return _render_detail_pane(request, task)
         return redirect('tasks:dashboard')
+
+
+class TaskUnreadPollView(LoginRequiredMixin, View):
+    """Liefert neue/ungelesene Tasks fuer Client-Polling und Browser-Notifications."""
+    def get(self, request):
+        unread_qs = _unread_tasks_queryset_for(request.user)
+        latest_items = list(unread_qs[:20])
+        return JsonResponse({
+            'unread_count': unread_qs.count(),
+            'items': [
+                {
+                    'id': t.pk,
+                    'title': t.title,
+                    'created_at': t.created_at.isoformat(),
+                    'created_by': (t.created_by.display_name or t.created_by.email) if t.created_by_id else '',
+                    'is_mine': bool(t.created_by_id == request.user.id),
+                }
+                for t in latest_items
+            ],
+        })
 
 
 class TaskAttachmentFileView(LoginRequiredMixin, View):
