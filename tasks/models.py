@@ -107,6 +107,11 @@ class Task(models.Model):
         default=False,
         help_text='Veraltet: Team-Sichtbarkeit wird ueber Feld "Team" gesteuert.'
     )
+    is_unread_tracking_enabled = models.BooleanField(
+        'Neu/Ungelesen tracken',
+        default=True,
+        help_text='Wenn aktiv, wird der Task fuer Nutzer bis zum ersten Oeffnen als neu markiert.'
+    )
 
     class Meta:
         ordering = ['-created_at']
@@ -138,6 +143,23 @@ class Comment(models.Model):
 
     def __str__(self):
         return self.content[:50] or '(leer)'
+
+
+class TaskReadState(models.Model):
+    """Merkt, wann ein Nutzer einen Task zum ersten Mal geoeffnet hat."""
+    task = models.ForeignKey(Task, on_delete=models.CASCADE, related_name='read_states')
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='task_read_states')
+    first_opened_at = models.DateTimeField('Erstmalig geoeffnet am', auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Task-Lesestatus'
+        verbose_name_plural = 'Task-Lesestatus'
+        constraints = [
+            models.UniqueConstraint(fields=['task', 'user'], name='uniq_task_read_state_task_user')
+        ]
+
+    def __str__(self):
+        return f'{self.user_id}:{self.task_id}'
 
 
 class Attachment(models.Model):

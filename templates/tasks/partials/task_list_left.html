@@ -11,13 +11,16 @@
     </summary>
     <div class="ps-2">
         {% for task in section_tasks %}
-        <div class="task-tree-task py-1 border-start border-2 task-status-{{ task.status }} {% if task.status == 'done' %}task-done text-body-secondary{% endif %}"
+        <div class="task-tree-task py-1 border-start border-2 task-status-{{ task.status }} {% if task.status == 'done' %}task-done text-body-secondary{% endif %}{% if task.pk in unread_task_ids %} task-unread{% endif %}"
              style="border-color: {{ display_color|default:'#dee2e6' }} !important;">
             <a href="#" class="text-decoration-none text-body d-block"
                hx-get="{% url 'tasks:detail_pane' task.pk %}"
                hx-target="#detail-pane"
                hx-swap="innerHTML"
                hx-push-url="{% url 'tasks:dashboard' %}?scope={{ active_scope }}&task={{ task.pk }}">
+                {% if task.pk in unread_task_ids %}
+                <span class="badge text-bg-success me-1">NEU</span>
+                {% endif %}
                 <span class="badge text-bg-secondary me-1">{{ task.get_status_display }}</span>
                 <span class="small">({{ task.progress }}%)</span>
                 {{ task.title }}

@@ -20,7 +20,7 @@
                   hx-get="{% url 'tasks:dashboard' %}?partial=tasklist"
                   hx-target="#task-list-container"
                   hx-swap="innerHTML"
-                  hx-include="[name=q],[name=sort],[name=section],[name=scope]"
+                  hx-include="[name=q],[name=sort],[name=section],[name=read_state],[name=scope]"
                   hx-trigger="change from:select delay:100ms">
                 <input type="hidden" name="partial" value="tasklist">
                 <input type="hidden" name="scope" value="{{ active_scope }}">
@@ -31,7 +31,7 @@
                            value="{{ search_query }}"
                            hx-get="{% url 'tasks:dashboard' %}?partial=tasklist"
                            hx-target="#task-list-container"
-                           hx-include="[name=q],[name=sort],[name=section],[name=scope]"
+                           hx-include="[name=q],[name=sort],[name=section],[name=read_state],[name=scope]"
                            hx-trigger="keyup delay:300ms">
                 </div>
                 <div class="d-flex gap-2 mb-2 flex-wrap">
@@ -44,6 +44,10 @@
                         <option value="title" {% if sort_mode == 'title' %}selected{% endif %}>Titel A->Z</option>
                         <option value="progress" {% if sort_mode == 'progress' %}selected{% endif %}>Fortschritt %</option>
                         <option value="created" {% if sort_mode == 'created' %}selected{% endif %}>Erstellungsdatum</option>
+                    </select>
+                    <select name="read_state" class="form-select form-select-sm" style="max-width:11rem">
+                        <option value="all" {% if read_state_mode == 'all' %}selected{% endif %}>Alle Lesestati</option>
+                        <option value="unread" {% if read_state_mode == 'unread' %}selected{% endif %}>Neue/Ungelesene</option>
                     </select>
                 </div>
             </form>

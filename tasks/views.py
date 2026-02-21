@@ -24,7 +24,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import mm
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image as RLImage
 
-from .models import Task, Group, Comment, ChangeLog, Attachment, Team
+from .models import Task, Group, Comment, ChangeLog, Attachment, Team, TaskReadState
 from .forms import TaskForm, GroupForm, CommentForm
 
 User = get_user_model()
@@ -67,6 +67,14 @@ def _task_editable_by(task, user):
     if task.team_id:
         return task.team.members.filter(pk=user.pk).exists()
     return task.created_by_id == user.id
+
+
+def _mark_task_as_read(task, user):
+    """Setzt den Lesestatus beim ersten Oeffnen, falls Tracking aktiv ist."""
+    if not task.is_unread_tracking_enabled:
+        return False
+    _, created = TaskReadState.objects.get_or_create(task_id=task.pk, user_id=user.pk)
+    return created
 
 
 def _normalize_progress(raw_value, default=0):
@@ -211,6 +219,9 @@ class TaskDashboardView(LoginRequiredMixin, ListView):
         section = self.request.GET.get('section', 'all')
         if section == 'assigned':
             qs = qs.filter(assignees=self.request.user, team__isnull=False)
+        read_state = self.request.GET.get('read_state', 'all')
+        if read_state == 'unread':
+            qs = qs.filter(is_unread_tracking_enabled=True).exclude(read_states__user=self.request.user)
         group_id = self.request.GET.get('group')
         if group_id:
             try:
@@ -273,6 +284,15 @@ class TaskDashboardView(LoginRequiredMixin, ListView):
         ctx['search_query'] = (self.request.GET.get('q') or '').strip()
         ctx['sort_mode'] = self.request.GET.get('sort', 'status')
         ctx['section_mode'] = self.request.GET.get('section', 'all')
+        ctx['read_state_mode'] = self.request.GET.get('read_state', 'all')
+        tracked_task_ids = [t.pk for t in tasks if t.is_unread_tracking_enabled]
+        read_task_ids = set(
+            TaskReadState.objects.filter(
+                user=self.request.user,
+                task_id__in=tracked_task_ids
+            ).values_list('task_id', flat=True)
+        ) if tracked_task_ids else set()
+        ctx['unread_task_ids'] = {task_id for task_id in tracked_task_ids if task_id not in read_task_ids}
         tabs = [(f'team:{t.pk}', t.name) for t in user_teams]
         if private_allowed:
             tabs = tabs + [('private', 'Privat')]
@@ -297,6 +317,11 @@ class TaskDetailView(LoginRequiredMixin, DetailView):
             'comments__attachments',
         )
 
+    def get_object(self, queryset=None):
+        task = super().get_object(queryset=queryset)
+        _mark_task_as_read(task, self.request.user)
+        return task
+
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
         all_comments = list(self.object.comments.all())
@@ -320,6 +345,7 @@ class TaskDetailPaneView(LoginRequiredMixin, View):
             ),
             pk=pk
         )
+        _mark_task_as_read(task, request.user)
         return _render_detail_pane(request, task)
 
 

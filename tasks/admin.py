@@ -1,7 +1,7 @@
 ﻿from django import forms
 from django.contrib import admin
 
-from .models import Attachment, ChangeLog, Comment, Group, Task, Team
+from .models import Attachment, ChangeLog, Comment, Group, Task, TaskReadState, Team
 
 
 class TaskAdminForm(forms.ModelForm):
@@ -36,9 +36,9 @@ class TaskAdmin(admin.ModelAdmin):
     form = TaskAdminForm
     list_display = (
         'title', 'team', 'status', 'progress', 'group', 'created_by',
-        'due_date', 'urgent', 'updated_at'
+        'due_date', 'urgent', 'is_unread_tracking_enabled', 'updated_at'
     )
-    list_filter = ('team', 'status', 'urgent', 'group', 'due_date')
+    list_filter = ('team', 'status', 'urgent', 'group', 'due_date', 'is_unread_tracking_enabled')
     search_fields = ('title', 'description', 'created_by__email', 'assignees__email')
     autocomplete_fields = ('created_by', 'updated_by', 'team', 'group')
     date_hierarchy = 'updated_at'
@@ -83,3 +83,13 @@ class ChangeLogAdmin(admin.ModelAdmin):
     autocomplete_fields = ('changed_by',)
     date_hierarchy = 'timestamp'
     ordering = ('-timestamp',)
+
+
+@admin.register(TaskReadState)
+class TaskReadStateAdmin(admin.ModelAdmin):
+    list_display = ('task', 'user', 'first_opened_at')
+    list_filter = ('first_opened_at',)
+    search_fields = ('task__title', 'user__email', 'user__display_name')
+    autocomplete_fields = ('task', 'user')
+    date_hierarchy = 'first_opened_at'
+    ordering = ('-first_opened_at',)
