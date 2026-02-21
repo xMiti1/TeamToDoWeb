@@ -19,6 +19,7 @@ urlpatterns = [
     path('<int:pk>/assignees/', views.TaskAssigneesUpdateView.as_view(), name='update_assignees'),
     path('<int:pk>/attachments/', views.TaskAttachmentCreateView.as_view(), name='attachment_create'),
     path('unread/poll/', views.TaskUnreadPollView.as_view(), name='unread_poll'),
+    path('push/subscription/', views.PushSubscriptionView.as_view(), name='push_subscription'),
     path('attachments/<int:pk>/file/', views.TaskAttachmentFileView.as_view(), name='attachment_file'),
     path('export/pdf/', views.TaskExportPDFView.as_view(), name='export_pdf'),
     path('import/desktop-db/', views.DesktopDatabaseImportView.as_view(), name='import_desktop_db'),

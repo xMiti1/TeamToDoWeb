@@ -1,7 +1,7 @@
 ﻿from django import forms
 from django.contrib import admin
 
-from .models import Attachment, ChangeLog, Comment, Group, Task, TaskReadState, Team
+from .models import Attachment, ChangeLog, Comment, Group, PushSubscription, Task, TaskReadState, Team
 
 
 class TaskAdminForm(forms.ModelForm):
@@ -93,3 +93,18 @@ class TaskReadStateAdmin(admin.ModelAdmin):
     autocomplete_fields = ('task', 'user')
     date_hierarchy = 'first_opened_at'
     ordering = ('-first_opened_at',)
+
+
+@admin.register(PushSubscription)
+class PushSubscriptionAdmin(admin.ModelAdmin):
+    list_display = ('user', 'endpoint_preview', 'is_active', 'updated_at', 'last_success_at')
+    list_filter = ('is_active', 'updated_at', 'last_success_at')
+    search_fields = ('user__email', 'user__display_name', 'endpoint')
+    autocomplete_fields = ('user',)
+    date_hierarchy = 'updated_at'
+    ordering = ('-updated_at',)
+
+    @admin.display(description='Endpoint')
+    def endpoint_preview(self, obj):
+        value = obj.endpoint or ''
+        return (value[:72] + '...') if len(value) > 75 else value

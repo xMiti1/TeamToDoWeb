@@ -162,6 +162,26 @@ class TaskReadState(models.Model):
         return f'{self.user_id}:{self.task_id}'
 
 
+class PushSubscription(models.Model):
+    """Web-Push-Subscription pro Nutzer und Browser/Device."""
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='push_subscriptions')
+    endpoint = models.URLField('Endpoint', unique=True, max_length=1000)
+    p256dh = models.CharField('p256dh', max_length=255)
+    auth = models.CharField('auth', max_length=255)
+    created_at = models.DateTimeField('Erstellt am', auto_now_add=True)
+    updated_at = models.DateTimeField('Aktualisiert am', auto_now=True)
+    last_success_at = models.DateTimeField('Zuletzt erfolgreich', null=True, blank=True)
+    is_active = models.BooleanField('Aktiv', default=True)
+
+    class Meta:
+        ordering = ['-updated_at']
+        verbose_name = 'Push-Subscription'
+        verbose_name_plural = 'Push-Subscriptions'
+
+    def __str__(self):
+        return f'{self.user_id}:{self.endpoint[:60]}'
+
+
 class Attachment(models.Model):
     """Dateianhang zu Task-Beschreibung oder Kommentar."""
     TARGET_TASK = 'task'

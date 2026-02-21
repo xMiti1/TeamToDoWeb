@@ -17,6 +17,8 @@ import sqlite3
 import tempfile
 import zipfile
 import uuid
+import json
+import logging
 from django.contrib.auth import get_user_model
 from django.core.files import File
 from reportlab.lib.pagesizes import A4
@@ -24,13 +26,19 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import mm
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image as RLImage
 
-from .models import Task, Group, Comment, ChangeLog, Attachment, Team, TaskReadState
+from .models import Task, Group, Comment, ChangeLog, Attachment, Team, TaskReadState, PushSubscription
 from .forms import TaskForm, GroupForm, CommentForm
+try:
+    from pywebpush import webpush, WebPushException
+except Exception:  # pragma: no cover
+    webpush = None
+    WebPushException = Exception
 
 User = get_user_model()
 DESKTOP_IMAGE_TAG_RE = re.compile(r"\[\[image:([a-zA-Z0-9_-]+)\]\]")
 PDF_MD_IMAGE_RE = re.compile(r'!\[([^\]]*)\]\(([^)]+)\)')
 PDF_ATTACHMENT_URL_RE = re.compile(r'/tasks/attachments/(?P<id>\d+)/file/?')
+logger = logging.getLogger(__name__)
 
 
 def _log_change(request, entity_type, entity_id, action, field=None, old_value=None, new_value=None):
@@ -86,6 +94,79 @@ def _unread_tasks_queryset_for(user):
         .order_by('-created_at', '-id')
         .distinct()
     )
+
+
+def _webpush_public_key():
+    return (os.environ.get('WEBPUSH_VAPID_PUBLIC_KEY') or '').strip()
+
+
+def _webpush_private_key():
+    return (os.environ.get('WEBPUSH_VAPID_PRIVATE_KEY') or '').strip()
+
+
+def _webpush_claims():
+    sub = (os.environ.get('WEBPUSH_VAPID_CLAIMS_SUB') or 'mailto:admin@example.com').strip()
+    return {'sub': sub}
+
+
+def _webpush_enabled():
+    return bool(webpush and _webpush_public_key() and _webpush_private_key())
+
+
+def _send_web_push(subscription, payload):
+    if not _webpush_enabled() or not subscription.is_active:
+        return False
+    subscription_info = {
+        'endpoint': subscription.endpoint,
+        'keys': {'p256dh': subscription.p256dh, 'auth': subscription.auth},
+    }
+    try:
+        webpush(
+            subscription_info=subscription_info,
+            data=json.dumps(payload),
+            vapid_private_key=_webpush_private_key(),
+            vapid_claims=_webpush_claims(),
+            ttl=120,
+        )
+        PushSubscription.objects.filter(pk=subscription.pk).update(
+            last_success_at=timezone.now(),
+            is_active=True,
+        )
+        return True
+    except WebPushException as exc:
+        status_code = getattr(getattr(exc, 'response', None), 'status_code', None)
+        if status_code in (404, 410):
+            PushSubscription.objects.filter(pk=subscription.pk).update(is_active=False)
+        logger.warning('Web push failed for subscription %s: %s', subscription.pk, exc)
+        return False
+
+
+def _notify_new_task_created(task, actor_user):
+    """Sendet Web Push nur bei neu erstellten Tasks an sichtbare Nutzer ausser dem Ausloeser."""
+    if not _webpush_enabled():
+        return
+    if task.team_id:
+        recipients = task.team.members.filter(is_active=True).exclude(pk=actor_user.pk)
+    else:
+        recipient_ids = set(task.assignees.filter(is_active=True).values_list('pk', flat=True))
+        if task.created_by_id and task.created_by_id != actor_user.pk:
+            recipient_ids.add(task.created_by_id)
+        recipients = User.objects.filter(pk__in=recipient_ids, is_active=True)
+    recipient_ids = list(recipients.values_list('pk', flat=True))
+    if not recipient_ids:
+        return
+    subscriptions = list(PushSubscription.objects.filter(user_id__in=recipient_ids, is_active=True))
+    if not subscriptions:
+        return
+    scope_value = f'team:{task.team_id}' if task.team_id else 'private'
+    payload = {
+        'title': 'Neue Aufgabe',
+        'body': task.title[:120],
+        'url': reverse('tasks:dashboard') + f'?scope={scope_value}&task={task.pk}',
+        'task_id': task.pk,
+    }
+    for subscription in subscriptions:
+        _send_web_push(subscription, payload)
 
 
 def _normalize_progress(raw_value, default=0):
@@ -230,8 +311,7 @@ class TaskDashboardView(LoginRequiredMixin, ListView):
         section = self.request.GET.get('section', 'all')
         if section == 'assigned':
             qs = qs.filter(assignees=self.request.user, team__isnull=False)
-        read_state = self.request.GET.get('read_state', 'all')
-        if read_state == 'unread':
+        elif section == 'unread':
             qs = _unread_tasks_queryset_for(self.request.user).filter(pk__in=qs.values('pk'))
         group_id = self.request.GET.get('group')
         if group_id:
@@ -295,7 +375,6 @@ class TaskDashboardView(LoginRequiredMixin, ListView):
         ctx['search_query'] = (self.request.GET.get('q') or '').strip()
         ctx['sort_mode'] = self.request.GET.get('sort', 'status')
         ctx['section_mode'] = self.request.GET.get('section', 'all')
-        ctx['read_state_mode'] = self.request.GET.get('read_state', 'all')
         tracked_task_ids = [t.pk for t in tasks if t.is_unread_tracking_enabled]
         read_task_ids = set(
             TaskReadState.objects.filter(
@@ -304,6 +383,9 @@ class TaskDashboardView(LoginRequiredMixin, ListView):
             ).values_list('task_id', flat=True)
         ) if tracked_task_ids else set()
         ctx['unread_task_ids'] = {task_id for task_id in tracked_task_ids if task_id not in read_task_ids}
+        ctx['unread_count'] = len(ctx['unread_task_ids'])
+        ctx['webpush_enabled'] = _webpush_enabled()
+        ctx['webpush_public_key'] = _webpush_public_key()
         tabs = [(f'team:{t.pk}', t.name) for t in user_teams]
         if private_allowed:
             tabs = tabs + [('private', 'Privat')]
@@ -400,6 +482,7 @@ class TaskCreateView(LoginRequiredMixin, CreateView):
             form.instance.status = 'urgent'
         result = super().form_valid(form)
         _log_change(self.request, 'task', form.instance.pk, 'created', None, None, form.instance.title)
+        transaction.on_commit(lambda: _notify_new_task_created(form.instance, self.request.user))
         return result
 
     def get_success_url(self):
@@ -830,6 +913,7 @@ class TaskQuickCreateView(LoginRequiredMixin, View):
             group_id=group_pk,
         )
         _log_change(request, 'task', task.pk, 'created', None, None, title)
+        transaction.on_commit(lambda: _notify_new_task_created(task, request.user))
         url = reverse('tasks:dashboard') + f'?task={task.pk}'
         if request.headers.get('HX-Request'):
             r = redirect(url)
@@ -874,6 +958,91 @@ class TaskUnreadPollView(LoginRequiredMixin, View):
                 for t in latest_items
             ],
         })
+
+
+class PushSubscriptionView(LoginRequiredMixin, View):
+    """Speichert/aktualisiert Browser-Push-Subscriptions des eingeloggten Nutzers."""
+    def post(self, request):
+        if not _webpush_enabled():
+            return JsonResponse({'error': 'webpush_disabled'}, status=503)
+        try:
+            data = json.loads(request.body.decode('utf-8'))
+        except Exception:
+            return JsonResponse({'error': 'invalid_json'}, status=400)
+        endpoint = (data.get('endpoint') or '').strip()
+        keys = data.get('keys') or {}
+        p256dh = (keys.get('p256dh') or '').strip()
+        auth = (keys.get('auth') or '').strip()
+        if not endpoint or not p256dh or not auth:
+            return JsonResponse({'error': 'invalid_subscription'}, status=400)
+        PushSubscription.objects.update_or_create(
+            endpoint=endpoint,
+            defaults={
+                'user': request.user,
+                'p256dh': p256dh,
+                'auth': auth,
+                'is_active': True,
+            },
+        )
+        return JsonResponse({'ok': True})
+
+    def delete(self, request):
+        try:
+            data = json.loads(request.body.decode('utf-8'))
+        except Exception:
+            data = {}
+        endpoint = (data.get('endpoint') or '').strip()
+        qs = PushSubscription.objects.filter(user=request.user)
+        if endpoint:
+            qs = qs.filter(endpoint=endpoint)
+        qs.update(is_active=False)
+        return JsonResponse({'ok': True})
+
+
+def push_service_worker(request):
+    """Service Worker fuer Web Push. Muss unter /sw.js erreichbar sein."""
+    js = """
+self.addEventListener('push', function(event) {
+  var data = {};
+  try { data = event.data ? event.data.json() : {}; } catch (e) {}
+  var title = data.title || 'TeamToDo';
+  var options = {
+    body: data.body || 'Neue Aufgabe verfuegbar',
+    data: { url: data.url || '/tasks/' }
+  };
+  event.waitUntil(
+    self.registration.showNotification(title, options).then(function() {
+      return clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(clientList) {
+        clientList.forEach(function(client) {
+          client.postMessage({ type: 'TASK_CREATED_PUSH', taskId: data.task_id || null });
+        });
+      });
+    })
+  );
+});
+
+self.addEventListener('notificationclick', function(event) {
+  event.notification.close();
+  var targetUrl = (event.notification.data && event.notification.data.url) || '/tasks/';
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(clientList) {
+      for (var i = 0; i < clientList.length; i++) {
+        var client = clientList[i];
+        if ('focus' in client) {
+          client.navigate(targetUrl);
+          return client.focus();
+        }
+      }
+      if (clients.openWindow) return clients.openWindow(targetUrl);
+      return null;
+    })
+  );
+});
+"""
+    response = HttpResponse(js, content_type='application/javascript; charset=utf-8')
+    response['Service-Worker-Allowed'] = '/'
+    response['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    return response
 
 
 class TaskAttachmentFileView(LoginRequiredMixin, View):

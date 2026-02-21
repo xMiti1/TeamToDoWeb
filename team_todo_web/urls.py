@@ -7,6 +7,7 @@ from django.views.generic import RedirectView
 from django.conf import settings
 from django.conf.urls.static import static
 from django.views.static import serve as static_serve
+from tasks import views as task_views
 
 admin.site.site_header = 'TeamToDo Verwaltung'
 admin.site.site_title = 'TeamToDo Admin'
@@ -15,6 +16,7 @@ admin.site.enable_nav_sidebar = False
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+    path('sw.js', task_views.push_service_worker, name='service_worker'),
     path('', RedirectView.as_view(pattern_name='tasks:dashboard', permanent=False)),
     path('', include('accounts.urls')),
     path('tasks/', include('tasks.urls')),
