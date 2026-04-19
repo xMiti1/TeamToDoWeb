@@ -601,19 +601,21 @@ class TaskCreateView(LoginRequiredMixin, CreateView):
         if selected_team and not self.request.user.teams.filter(pk=selected_team.pk).exists():
             form.add_error('team', 'Du bist diesem Team nicht zugewiesen.')
             return self.form_invalid(form)
+        assignee_ids = [user.pk for user in form.cleaned_data.get('assignees', [])]
         form.instance.created_by = self.request.user
         form.instance.is_team_visible = bool(form.instance.team_id)
         if form.instance.urgent:
             form.instance.status = 'urgent'
-        result = super().form_valid(form)
-        _log_change(self.request, 'task', form.instance.pk, 'created', None, None, form.instance.title)
-        _queue_assignment_notification(
-            form.instance.pk,
-            self.request.user.pk,
-            [],
-            list(form.instance.assignees.values_list('pk', flat=True)),
-        )
-        transaction.on_commit(lambda: _notify_new_task_created(form.instance, self.request.user))
+        with transaction.atomic():
+            result = super().form_valid(form)
+            _log_change(self.request, 'task', form.instance.pk, 'created', None, None, form.instance.title)
+            _queue_assignment_notification(
+                form.instance.pk,
+                self.request.user.pk,
+                [],
+                assignee_ids,
+            )
+            transaction.on_commit(lambda: _notify_new_task_created(form.instance, self.request.user))
         return result
 
     def get_success_url(self):
