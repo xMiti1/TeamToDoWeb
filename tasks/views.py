@@ -1,4 +1,4 @@
-from django.shortcuts import render, redirect, get_object_or_404
+﻿from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
 from django.views.generic import ListView, CreateView, UpdateView, DeleteView, DetailView
 from django.urls import reverse_lazy, reverse
@@ -643,7 +643,7 @@ def _get_task_for_update(request, pk):
 def _render_detail_pane(request, task):
     task = (
         Task.objects.filter(pk=task.pk)
-        .prefetch_related('assignees', 'attachments', 'comments__author', 'comments__attachments')
+        .prefetch_related('assignees', 'attachments', 'comments__author', 'comments__attachments', 'related_tasks__group', 'related_tasks__group__parent')
         .first()
     )
     all_comments = list(task.comments.all())
@@ -661,9 +661,13 @@ def _render_detail_pane(request, task):
     related_candidates = list(
         _task_queryset_visible_to(request.user)
         .exclude(pk=task.pk)
-        .select_related('group')
-        .order_by('title', 'id')[:300]
+        .select_related('group', 'group__parent', 'team')
+        .order_by('-created_at', '-id')[:500]
     )
+    related_tasks_by_group = {}
+    for related in related_candidates:
+        related_tasks_by_group.setdefault(related.group_id if related.group_id else None, []).append(related)
+    related_sections = _build_group_sections(groups, related_tasks_by_group)
     return render(request, 'tasks/partials/detail_pane.html', {
         'task': task,
         'comment_form': CommentForm(),
@@ -674,7 +678,8 @@ def _render_detail_pane(request, task):
         'group_levels': _group_hierarchical_items(groups),
         'selected_assignee_ids': list(task.assignees.values_list('pk', flat=True)),
         'selected_related_task_ids': list(task.related_tasks.values_list('pk', flat=True)),
-        'related_task_candidates': related_candidates,
+        'related_task_sections': related_sections,
+        'related_items': list(task.related_tasks.select_related('group', 'group__parent').order_by('group__name', 'title')),
         'comment_items': [c for c in all_comments if not c.is_system],
         'log_items': [c for c in all_comments if c.is_system],
         'all_attachments': visible_attachments,

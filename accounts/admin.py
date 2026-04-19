@@ -1,4 +1,4 @@
-from django import forms
+﻿from django import forms
 from django.conf import settings
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin

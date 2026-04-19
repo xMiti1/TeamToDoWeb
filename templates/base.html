@@ -80,6 +80,52 @@
         .progress-step-range {
             width: 100%;
         }
+        .related-tasks-panel {
+            background: color-mix(in srgb, var(--bs-body-bg) 88%, var(--bs-secondary-bg) 12%);
+            min-height: 100%;
+        }
+        .related-task-chip {
+            display: flex;
+            gap: 0.4rem;
+            align-items: baseline;
+            padding: 0.6rem 0.75rem;
+            border: 1px solid var(--bs-border-color);
+            border-radius: 0.5rem;
+            color: inherit;
+            background: var(--bs-body-bg);
+        }
+        .related-task-chip:hover {
+            background: var(--bs-secondary-bg);
+        }
+        .related-task-chip__meta,
+        .related-task-option__meta,
+        .related-task-chip__progress {
+            color: var(--bs-secondary-color);
+            font-size: 0.85rem;
+        }
+        .related-task-chip__title,
+        .related-task-option__title {
+            font-weight: 500;
+        }
+        .related-task-option {
+            display: flex;
+            gap: 0.75rem;
+            align-items: flex-start;
+            padding: 0.5rem 0.75rem;
+            border: 1px solid var(--bs-border-color);
+            border-radius: 0.5rem;
+            margin-bottom: 0.5rem;
+            background: var(--bs-body-bg);
+        }
+        .related-task-option__label {
+            display: flex;
+            gap: 0.4rem;
+            flex-wrap: wrap;
+        }
+        .related-task-option__id {
+            color: var(--bs-secondary-color);
+            font-size: 0.85rem;
+        }
         textarea.drag-over {
             outline: 2px dashed var(--bs-primary);
             outline-offset: 2px;

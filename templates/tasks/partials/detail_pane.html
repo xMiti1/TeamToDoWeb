@@ -1,6 +1,6 @@
-{% load tasks_text %}
+﻿{% load tasks_text %}
 <div id="detail-pane-content" class="h-100 d-flex flex-column">
-    <div class="d-flex justify-content-between align-items-start mb-2">
+    <div class="d-flex justify-content-between align-items-start mb-3">
         <div>
             <p class="text-body-secondary small mb-0">ID {{ task.pk }} · Version {{ task.version }} · {{ task.created_by.display_name|default:task.created_by.email }} · {{ task.created_at|date:"d.m.Y H:i" }}</p>
             <h2 class="h5 mb-1 mt-1">{{ task.title }}</h2>
@@ -26,70 +26,148 @@
           hx-post="{% url 'tasks:quick_update' task.pk %}"
           hx-target="#detail-pane"
           hx-swap="innerHTML"
-          class="mb-3">
+          class="mb-3"
+          id="task-quick-update-form-{{ task.pk }}">
         {% csrf_token %}
-        <div class="mb-2">
-            <label class="form-label small">Status</label>
-            <select name="status" class="form-select form-select-sm" style="max-width:12rem">
-                <option value="urgent" {% if task.status == 'urgent' %}selected{% endif %}>Dringend</option>
-                <option value="open" {% if task.status == 'open' %}selected{% endif %}>Offen</option>
-                <option value="pause" {% if task.status == 'pause' %}selected{% endif %}>Pausiert</option>
-                <option value="done" {% if task.status == 'done' %}selected{% endif %}>Erledigt</option>
-            </select>
-        </div>
-        <div class="mb-2">
-            <label class="form-label small">Team</label>
-            <select name="team" class="form-select form-select-sm" style="max-width:18rem">
-                <option value="">Privat</option>
-                {% for t in teams %}
-                <option value="{{ t.pk }}" {% if task.team_id == t.pk %}selected{% endif %}>{{ t.name }}</option>
-                {% endfor %}
-            </select>
-        </div>
-        <div class="mb-2">
-            <label class="form-label small">Gruppe</label>
-            <select name="group" class="form-select form-select-sm" style="max-width:18rem">
-                <option value="">Ohne Gruppe</option>
-                {% for g, level in group_levels %}
-                <option value="{{ g.pk }}" {% if task.group_id == g.pk %}selected{% endif %}>{% for _ in ""|ljust:level %}&nbsp;&nbsp;{% endfor %}{{ g.name }}</option>
-                {% endfor %}
-            </select>
-        </div>
-        <div class="mb-2">
-            <label class="form-label small">Verknuepfte Aufgaben</label>
-            <select name="related_tasks" class="form-select form-select-sm" style="max-width:30rem" multiple size="6">
-                {% for related in related_task_candidates %}
-                <option value="{{ related.pk }}" {% if related.pk in selected_related_task_ids %}selected{% endif %}>#{{ related.pk }} - {{ related.title }}</option>
-                {% endfor %}
-            </select>
-            <div class="form-text">Mehrfachauswahl mit Strg/Cmd.</div>
-        </div>
-        <div class="mb-2">
-            <label class="form-label small">Fortschritt</label>
-            <div class="d-flex align-items-center gap-2">
-                <div class="segmented-progress" id="progress-wrap" style="--value: {{ task.progress }};">
-                    <div class="segmented-progress__fill" id="progress-fill" style="width: {{ task.progress }}%"></div>
-                    <div class="segmented-progress__ticks"></div>
-                    <input type="range" name="progress" id="progress-slider" value="{{ task.progress }}" min="0" max="100" step="10" class="segmented-progress__input" aria-label="Fortschritt">
+        <div class="row g-3 align-items-start">
+            <div class="col-xl-4">
+                <div class="mb-2">
+                    <label class="form-label small">Status</label>
+                    <select name="status" class="form-select form-select-sm">
+                        <option value="urgent" {% if task.status == 'urgent' %}selected{% endif %}>Dringend</option>
+                        <option value="open" {% if task.status == 'open' %}selected{% endif %}>Offen</option>
+                        <option value="pause" {% if task.status == 'pause' %}selected{% endif %}>Pausiert</option>
+                        <option value="done" {% if task.status == 'done' %}selected{% endif %}>Erledigt</option>
+                    </select>
                 </div>
-                <span class="small"><span id="progress-val">{{ task.progress }}</span>%</span>
+                <div class="mb-2">
+                    <label class="form-label small">Team</label>
+                    <select name="team" class="form-select form-select-sm">
+                        <option value="">Privat</option>
+                        {% for t in teams %}
+                        <option value="{{ t.pk }}" {% if task.team_id == t.pk %}selected{% endif %}>{{ t.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="mb-2">
+                    <label class="form-label small">Gruppe</label>
+                    <select name="group" class="form-select form-select-sm">
+                        <option value="">Ohne Gruppe</option>
+                        {% for g, level in group_levels %}
+                        <option value="{{ g.pk }}" {% if task.group_id == g.pk %}selected{% endif %}>{% for _ in ""|ljust:level %}&nbsp;&nbsp;{% endfor %}{{ g.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="mb-2">
+                    <label class="form-label small">Fortschritt</label>
+                    <div class="d-flex align-items-center gap-2">
+                        <div class="segmented-progress" id="progress-wrap" style="--value: {{ task.progress }};">
+                            <div class="segmented-progress__fill" id="progress-fill" style="width: {{ task.progress }}%"></div>
+                            <div class="segmented-progress__ticks"></div>
+                            <input type="range" name="progress" id="progress-slider" value="{{ task.progress }}" min="0" max="100" step="10" class="segmented-progress__input" aria-label="Fortschritt">
+                        </div>
+                        <span class="small"><span id="progress-val">{{ task.progress }}</span>%</span>
+                    </div>
+                </div>
+                <div class="mb-0">
+                    <label class="form-label small">Zugewiesen an</label>
+                    <div class="border rounded p-2" style="max-height:10rem; overflow:auto;">
+                        {% for u in users %}
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" name="assignees" value="{{ u.pk }}" id="assignee-{{ task.pk }}-{{ u.pk }}" {% if u.pk in selected_assignee_ids %}checked{% endif %}>
+                            <label class="form-check-label small" for="assignee-{{ task.pk }}-{{ u.pk }}">{{ u.display_name|default:u.email }}</label>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+            <div class="col-xl-8">
+                <div class="related-tasks-panel border rounded p-3 h-100">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <h3 class="h6 mb-0">Verknüpfte Aufgaben</h3>
+                        <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-toggle="modal" data-bs-target="#relatedTasksModal-{{ task.pk }}" title="Verknüpfungen bearbeiten">
+                            <i class="bi {% if related_items %}bi-gear{% else %}bi-link-45deg{% endif %}"></i>
+                            <span class="ms-1">{% if related_items %}Bearbeiten{% else %}Aufgabe verknüpfen{% endif %}</span>
+                        </button>
+                    </div>
+                    {% if related_items %}
+                    <div class="related-tasks-list d-flex flex-column gap-2">
+                        {% for rel in related_items %}
+                        <a href="javascript:void(0)"
+                           class="related-task-chip text-decoration-none"
+                           data-task-id="{{ rel.pk }}"
+                           hx-get="{% url 'tasks:detail_pane' rel.pk %}{% if active_scope %}?scope={{ active_scope|urlencode }}{% endif %}"
+                           hx-target="#detail-pane"
+                           hx-swap="innerHTML"
+                           hx-push-url="{% url 'tasks:dashboard' %}?{% if active_scope %}scope={{ active_scope|urlencode }}&{% endif %}task={{ rel.pk }}">
+                            <span class="related-task-chip__meta">[{% if rel.group %}{{ rel.group.name }}{% else %}Ohne Gruppe{% endif %}]</span>
+                            <span class="related-task-chip__title">{{ rel.title }}</span>
+                            <span class="related-task-chip__progress">({{ rel.progress }}%)</span>
+                        </a>
+                        {% endfor %}
+                    </div>
+                    {% else %}
+                    <p class="small text-body-secondary mb-0">Noch keine Aufgaben verknüpft.</p>
+                    {% endif %}
+                </div>
             </div>
         </div>
-        <div class="mb-2">
-            <label class="form-label small">Zugewiesen an</label>
-            <div class="border rounded p-2" style="max-height:10rem; overflow:auto;">
-                {% for u in users %}
-                <div class="form-check">
-                    <input class="form-check-input" type="checkbox" name="assignees" value="{{ u.pk }}" id="assignee-{{ task.pk }}-{{ u.pk }}" {% if u.pk in selected_assignee_ids %}checked{% endif %}>
-                    <label class="form-check-label small" for="assignee-{{ task.pk }}-{{ u.pk }}">{{ u.display_name|default:u.email }}</label>
-                </div>
-                {% endfor %}
-            </div>
+        <div class="mt-3">
+            <button type="submit" class="btn btn-primary btn-sm">
+                <i class="bi bi-floppy me-1"></i>Speichern
+            </button>
         </div>
-        <button type="submit" class="btn btn-primary btn-sm">
-            <i class="bi bi-floppy me-1"></i>Speichern
-        </button>
     </form>
+
+    <div class="modal fade" id="relatedTasksModal-{{ task.pk }}" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-xl modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 class="modal-title h5 mb-0">Aufgaben verknüpfen</h3>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+                </div>
+                <div class="modal-body pb-2">
+                    <div class="related-task-tree">
+                        {% for group, level, display_color, section_tasks in related_task_sections %}
+                        <div class="related-task-group" data-related-filter-item="1">
+                            <div class="small fw-semibold mb-2" style="padding-left: {{ level|add:1 }}rem; color: {{ display_color|default:'#6c757d' }};">
+                                {% if group %}
+                                    <i class="bi bi-folder2-open me-1"></i>{{ group.name }}
+                                {% else %}
+                                    <i class="bi bi-inbox me-1"></i>Ohne Gruppe
+                                {% endif %}
+                            </div>
+                            {% for rel in section_tasks %}
+                            <label class="related-task-option" data-related-filter-item="1" data-related-filter-text="{% if rel.group %}{{ rel.group.name }} {% endif %}{{ rel.title }}">
+                                <input class="form-check-input mt-0"
+                                       type="checkbox"
+                                       name="related_tasks"
+                                       value="{{ rel.pk }}"
+                                       form="task-quick-update-form-{{ task.pk }}"
+                                       {% if rel.pk in selected_related_task_ids %}checked{% endif %}>
+                                <span class="related-task-option__label">
+                                    <span class="related-task-option__id">#{{ rel.pk }}</span>
+                                    <span class="related-task-option__title">{{ rel.title }}</span>
+                                    <span class="related-task-option__meta">[{% if rel.group %}{{ rel.group.name }}{% else %}Ohne Gruppe{% endif %}] ({{ rel.progress }}%)</span>
+                                </span>
+                            </label>
+                            {% endfor %}
+                        </div>
+                        {% empty %}
+                        <p class="text-body-secondary small mb-0">Keine weiteren Aufgaben im aktuellen Bereich verfügbar.</p>
+                        {% endfor %}
+                    </div>
+                </div>
+                <div class="modal-footer flex-column align-items-stretch">
+                    <input type="search" class="form-control form-control-sm" placeholder="Aufgaben im Baum suchen..." data-related-search="{{ task.pk }}">
+                    <div class="d-flex justify-content-end gap-2 mt-2">
+                        <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Abbrechen</button>
+                        <button type="submit" class="btn btn-primary btn-sm" form="task-quick-update-form-{{ task.pk }}">Verknüpfungen speichern</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
     {% else %}
     <p class="small mb-2"><span class="badge bg-secondary">{{ task.get_status_display }}</span></p>
     <div class="mb-3">
@@ -102,6 +180,28 @@
         <label class="form-label small">Zugewiesen an</label>
         <p class="small mb-0">{% for a in task.assignees.all %}{{ a.display_name|default:a.email }}{% if not forloop.last %}, {% endif %}{% empty %}—{% endfor %}</p>
     </div>
+    <div class="mb-3">
+        <label class="form-label small">Verknüpfte Aufgaben</label>
+        {% if related_items %}
+        <div class="related-tasks-list d-flex flex-column gap-2">
+            {% for rel in related_items %}
+            <a href="javascript:void(0)"
+               class="related-task-chip text-decoration-none"
+               data-task-id="{{ rel.pk }}"
+               hx-get="{% url 'tasks:detail_pane' rel.pk %}{% if active_scope %}?scope={{ active_scope|urlencode }}{% endif %}"
+               hx-target="#detail-pane"
+               hx-swap="innerHTML"
+               hx-push-url="{% url 'tasks:dashboard' %}?{% if active_scope %}scope={{ active_scope|urlencode }}&{% endif %}task={{ rel.pk }}">
+                <span class="related-task-chip__meta">[{% if rel.group %}{{ rel.group.name }}{% else %}Ohne Gruppe{% endif %}]</span>
+                <span class="related-task-chip__title">{{ rel.title }}</span>
+                <span class="related-task-chip__progress">({{ rel.progress }}%)</span>
+            </a>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p class="small text-body-secondary mb-0">Keine Verknüpfungen vorhanden.</p>
+        {% endif %}
+    </div>
     {% endif %}
 
     <div class="mb-3">
@@ -111,21 +211,6 @@
         {% else %}
         <div class="text-body-secondary small mb-2">Keine Beschreibung hinterlegt.</div>
         {% endif %}
-
-    </div>
-    <div class="mb-3">
-        <label class="form-label small">Verwandte Aufgaben</label>
-        <div class="small">
-            {% for rel in task.related_tasks.all %}
-                <a href="javascript:void(0)" class="task-row-link d-inline-block me-2" data-task-id="{{ rel.pk }}"
-                   hx-get="{% url 'tasks:detail_pane' rel.pk %}"
-                   hx-target="#detail-pane"
-                   hx-swap="innerHTML"
-                   hx-push-url="{% url 'tasks:dashboard' %}?{% if active_scope %}scope={{ active_scope|urlencode }}&{% endif %}task={{ rel.pk }}">#{{ rel.pk }} {{ rel.title }}</a>
-            {% empty %}
-                <span class="text-body-secondary">Keine Verknuepfungen.</span>
-            {% endfor %}
-        </div>
     </div>
 
     <hr>
@@ -239,6 +324,17 @@
                     value.textContent = this.value;
                     fill.style.width = this.value + '%';
                     if (wrap) wrap.style.setProperty('--value', this.value);
+                });
+            }
+
+            var searchInput = document.querySelector('[data-related-search="{{ task.pk }}"]');
+            if (searchInput) {
+                searchInput.addEventListener('input', function() {
+                    var term = (this.value || '').toLowerCase().trim();
+                    document.querySelectorAll('#relatedTasksModal-{{ task.pk }} [data-related-filter-item="1"]').forEach(function(item) {
+                        var text = (item.getAttribute('data-related-filter-text') || item.textContent || '').toLowerCase();
+                        item.style.display = !term || text.indexOf(term) !== -1 ? '' : 'none';
+                    });
                 });
             }
 
