@@ -269,6 +269,26 @@ def _send_assignment_notification_emails(task, actor_user, old_assignee_ids, new
         )
 
 
+def _queue_assignment_notification(task_id, actor_user_id, old_assignee_ids, new_assignee_ids):
+    old_assignee_ids = list(old_assignee_ids or [])
+    new_assignee_ids = list(new_assignee_ids or [])
+
+    def _run():
+        task = Task.objects.filter(pk=task_id).first()
+        actor_user = User.objects.filter(pk=actor_user_id).first()
+        new_assignees = list(User.objects.filter(pk__in=new_assignee_ids, is_active=True))
+        if not task or not actor_user:
+            logger.warning(
+                'Assignment mail skipped after commit: task=%s actor=%s missing',
+                task_id,
+                actor_user_id,
+            )
+            return
+        _send_assignment_notification_emails(task, actor_user, old_assignee_ids, new_assignees)
+
+    transaction.on_commit(_run)
+
+
 def _normalize_progress(raw_value, default=0):
     try:
         progress = int(raw_value)
@@ -587,7 +607,12 @@ class TaskCreateView(LoginRequiredMixin, CreateView):
             form.instance.status = 'urgent'
         result = super().form_valid(form)
         _log_change(self.request, 'task', form.instance.pk, 'created', None, None, form.instance.title)
-        _send_assignment_notification_emails(form.instance, self.request.user, [], list(form.instance.assignees.all()))
+        _queue_assignment_notification(
+            form.instance.pk,
+            self.request.user.pk,
+            [],
+            list(form.instance.assignees.values_list('pk', flat=True)),
+        )
         transaction.on_commit(lambda: _notify_new_task_created(form.instance, self.request.user))
         return result
 
@@ -805,7 +830,12 @@ class TaskQuickUpdateView(LoginRequiredMixin, View):
             changes.append(f'Verknuepfungen auf {links}')
         if changes:
             _add_system_comment(task, f'SYSTEM: Änderungen von "{disp}": ' + '; '.join(changes) + '.')
-        _send_assignment_notification_emails(task, request.user, old_assignees, new_assignees)
+        _queue_assignment_notification(
+            task.pk,
+            request.user.pk,
+            old_assignees,
+            [assignee.pk for assignee in new_assignees],
+        )
 
         if request.headers.get('HX-Request'):
             return _render_detail_pane(request, task)
@@ -909,6 +939,7 @@ class TaskAssigneesUpdateView(LoginRequiredMixin, View):
     """HTMX: Zuweisung (Assignees) per Dropdown + System-Kommentar."""
     def post(self, request, pk):
         task = _get_task_for_update(request, pk)
+        old_assignee_ids = list(task.assignees.values_list('pk', flat=True))
         assignee_ids = request.POST.getlist('assignees')
         new_assignees = list(User.objects.filter(pk__in=assignee_ids, is_active=True))
         task.assignees.set(new_assignees)
@@ -919,6 +950,12 @@ class TaskAssigneesUpdateView(LoginRequiredMixin, View):
         names = ', '.join(a.display_name or a.email for a in new_assignees) or 'â€”'
         _add_system_comment(task, f'SYSTEM: Zuweisung durch "{disp}" auf {names} gesetzt.')
         _log_change(request, 'task', task.pk, 'updated', 'assignees', None, names)
+        _queue_assignment_notification(
+            task.pk,
+            request.user.pk,
+            old_assignee_ids,
+            [assignee.pk for assignee in new_assignees],
+        )
         if request.headers.get('HX-Request'):
             return _render_detail_pane(request, task)
         return redirect('tasks:dashboard')
