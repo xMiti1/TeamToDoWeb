@@ -315,6 +315,28 @@
                 if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.form.requestSubmit(); }
             });
 
+            function cleanupModalArtifacts() {
+                document.body.classList.remove('modal-open');
+                document.body.style.removeProperty('padding-right');
+                document.querySelectorAll('.modal-backdrop').forEach(function(backdrop) {
+                    backdrop.remove();
+                });
+            }
+
+            var quickForm = document.getElementById('task-quick-update-form-{{ task.pk }}');
+            var relatedModalEl = document.getElementById('relatedTasksModal-{{ task.pk }}');
+            if (quickForm && relatedModalEl) {
+                quickForm.addEventListener('submit', function() {
+                    var modalInstance = bootstrap.Modal.getInstance(relatedModalEl);
+                    if (modalInstance) {
+                        relatedModalEl.addEventListener('hidden.bs.modal', cleanupModalArtifacts, { once: true });
+                        modalInstance.hide();
+                    } else {
+                        cleanupModalArtifacts();
+                    }
+                });
+            }
+
             var slider = document.getElementById('progress-slider');
             var value = document.getElementById('progress-val');
             var fill = document.getElementById('progress-fill');
@@ -366,6 +388,8 @@
                     });
                 });
             });
+
+            cleanupModalArtifacts();
         })();
         </script>
     </div>
