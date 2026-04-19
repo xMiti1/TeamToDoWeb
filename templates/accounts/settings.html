@@ -1,4 +1,4 @@
-﻿{% extends "base.html" %}
+{% extends "base.html" %}
 {% block title %}Einstellungen - TeamToDo{% endblock %}
 
 {% block content %}
@@ -27,6 +27,21 @@
                         {{ settings_form.disable_private_tab }}
                         <label class="form-check-label" for="id_disable_private_tab">Privat-Tab deaktivieren</label>
                         {% if settings_form.disable_private_tab.errors %}<div class="invalid-feedback d-block">{{ settings_form.disable_private_tab.errors.0 }}</div>{% endif %}
+                    </div>
+                    <div class="mb-3 form-check">
+                        {{ settings_form.email_notifications_enabled }}
+                        <label class="form-check-label" for="id_email_notifications_enabled">E-Mail-Benachrichtigungen erhalten</label>
+                        {% if settings_form.email_notifications_enabled.errors %}<div class="invalid-feedback d-block">{{ settings_form.email_notifications_enabled.errors.0 }}</div>{% endif %}
+                    </div>
+                    <div class="mb-3">
+                        <label for="id_push_reminder_frequency" class="form-label">Push-Erinnerung anzeigen</label>
+                        {{ settings_form.push_reminder_frequency }}
+                        {% if settings_form.push_reminder_frequency.errors %}<div class="invalid-feedback d-block">{{ settings_form.push_reminder_frequency.errors.0 }}</div>{% endif %}
+                    </div>
+                    <div class="mb-3 form-check">
+                        {{ settings_form.push_reminder_disabled }}
+                        <label class="form-check-label" for="id_push_reminder_disabled">Push-Erinnerung komplett deaktivieren</label>
+                        {% if settings_form.push_reminder_disabled.errors %}<div class="invalid-feedback d-block">{{ settings_form.push_reminder_disabled.errors.0 }}</div>{% endif %}
                     </div>
 
                     {% if settings_form.non_field_errors %}<div class="alert alert-danger">{{ settings_form.non_field_errors }}</div>{% endif %}

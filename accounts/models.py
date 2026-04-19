@@ -44,6 +44,29 @@ class User(AbstractUser):
         default=False,
         help_text='Wenn aktiv, wird im Dashboard nur mit Team-Tabs gearbeitet.'
     )
+    push_reminder_disabled = models.BooleanField(
+        'Push-Erinnerung deaktiviert',
+        default=False,
+        help_text='Wenn aktiv, wird kein Push-Erinnerungsdialog mehr gezeigt.'
+    )
+    push_reminder_frequency = models.CharField(
+        'Push-Erinnerung Intervall',
+        max_length=10,
+        default='daily',
+        choices=(
+            ('login', 'Bei jedem Login'),
+            ('daily', 'Maximal einmal pro Tag'),
+        ),
+    )
+    push_reminder_last_shown_at = models.DateTimeField(
+        'Push-Erinnerung zuletzt angezeigt',
+        null=True,
+        blank=True,
+    )
+    email_notifications_enabled = models.BooleanField(
+        'E-Mail Benachrichtigungen aktiv',
+        default=True,
+    )
     teams = models.ManyToManyField(
         'tasks.Team',
         related_name='members',

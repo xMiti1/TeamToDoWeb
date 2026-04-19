@@ -1,7 +1,7 @@
-﻿from django import forms
+from django import forms
 from django.contrib import admin
 
-from .models import Attachment, ChangeLog, Comment, Group, PushSubscription, Task, TaskReadState, Team
+from .models import Attachment, ChangeLog, Comment, Group, NotificationRule, PushSubscription, Task, TaskReadState, Team
 
 
 class TaskAdminForm(forms.ModelForm):
@@ -40,7 +40,7 @@ class TaskAdmin(admin.ModelAdmin):
     )
     list_filter = ('team', 'status', 'urgent', 'group', 'due_date', 'is_unread_tracking_enabled')
     search_fields = ('title', 'description', 'created_by__email', 'assignees__email')
-    autocomplete_fields = ('created_by', 'updated_by', 'team', 'group')
+    autocomplete_fields = ('created_by', 'updated_by', 'team', 'group', 'related_tasks')
     date_hierarchy = 'updated_at'
     ordering = ('-updated_at',)
     list_select_related = ('created_by', 'updated_by', 'team', 'group')
@@ -108,3 +108,13 @@ class PushSubscriptionAdmin(admin.ModelAdmin):
     def endpoint_preview(self, obj):
         value = obj.endpoint or ''
         return (value[:72] + '...') if len(value) > 75 else value
+
+
+@admin.register(NotificationRule)
+class NotificationRuleAdmin(admin.ModelAdmin):
+    list_display = (
+        'is_enabled',
+        'notify_assignees_on_assignment',
+        'notify_creator_on_assignment',
+        'updated_at',
+    )

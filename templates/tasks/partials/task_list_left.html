@@ -1,5 +1,5 @@
 {% for group, level, display_color, section_tasks in group_sections %}
-<details class="task-tree-section small" open style="margin-left: {% widthratio level 1 16 %}px;">
+<details class="task-tree-section small" open style="margin-left: {% widthratio level 1 16 %}px;" data-group-key="{% if group %}group-{{ group.pk }}{% else %}group-none{% endif %}">
     <summary class="py-1 px-1 rounded d-flex align-items-center gap-1" style="cursor:pointer;">
         {% if group %}
             <span class="rounded" style="display:inline-block;width:0.6rem;height:0.6rem;background:{{ display_color|default:'#888' }}"></span>
@@ -11,9 +11,9 @@
     </summary>
     <div class="ps-2">
         {% for task in section_tasks %}
-        <div class="task-tree-task py-1 border-start border-2 task-status-{{ task.status }} {% if task.status == 'done' %}task-done text-body-secondary{% endif %}{% if task.pk in unread_task_ids %} task-unread{% endif %}"
+        <div class="task-tree-task py-1 border-start border-2 task-status-{{ task.status }} {% if task.status == 'done' %}task-done text-body-secondary{% endif %}{% if task.pk in unread_task_ids %} task-unread{% endif %}{% if selected_task_id == task.pk %} task-selected{% endif %}"
              style="border-color: {{ display_color|default:'#dee2e6' }} !important;">
-            <a href="#" class="text-decoration-none text-body d-block"
+            <a href="javascript:void(0)" class="text-decoration-none text-body d-block task-row-link {% if selected_task_id == task.pk %}active{% endif %}" data-task-id="{{ task.pk }}"
                hx-get="{% url 'tasks:detail_pane' task.pk %}"
                hx-target="#detail-pane"
                hx-swap="innerHTML"

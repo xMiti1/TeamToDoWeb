@@ -1,4 +1,4 @@
-﻿{% extends "base.html" %}
+{% extends "base.html" %}
 {% block title %}Dashboard - TeamToDo{% endblock %}
 {% block main_class %}container-fluid p-0 min-vh-100 d-flex flex-column{% endblock %}
 
@@ -91,6 +91,29 @@
         </div>
     </section>
 </div>
+{% if show_push_reminder_popup %}
+<div class="modal fade" id="pushReminderModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Push-Benachrichtigungen aktivieren</h5>
+            </div>
+            <div class="modal-body">
+                <p class="mb-3">Empfohlen: Aktiviere Push-Benachrichtigungen, damit du neue Zuweisungen sofort siehst.</p>
+                <div class="alert alert-primary py-2 mb-0">
+                    <i class="bi bi-bell-fill me-1"></i>
+                    <strong>Bitte aktivieren</strong> fuer schnelle Team-Updates.
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" id="push-reminder-disable" class="btn btn-outline-secondary">Nicht mehr nachfragen</button>
+                <button type="button" id="push-reminder-later" class="btn btn-secondary">Nicht aktivieren</button>
+                <button type="button" id="push-reminder-enable" class="btn btn-primary">Jetzt aktivieren</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
 {% endblock %}
 
 {% block extra_css %}
@@ -109,25 +132,109 @@
 (function () {
     var dashboardUrl = "{% url 'tasks:dashboard' %}";
     var pushSubscriptionUrl = "{% url 'tasks:push_subscription' %}";
+    var pushReminderPreferenceUrl = "{% url 'tasks:push_reminder_preference' %}";
     var vapidPublicKey = "{{ webpush_public_key|default:''|escapejs }}";
+    var activeScope = "{{ active_scope|escapejs }}";
+    var selectedTaskId = "{{ selected_task_id|default:'' }}";
+    var listContainer = document.getElementById('task-list-container');
+    var groupStateKey = 'teamtodo:group-open:' + ({{ request.user.pk }} || 'anon') + ':' + activeScope;
 
     function refreshTaskList() {
         var form = document.getElementById('filter-form');
         if (!form || !window.htmx) return;
         var values = {};
+        var scrollTop = listContainer ? listContainer.scrollTop : 0;
         new FormData(form).forEach(function (v, k) { values[k] = v; });
         htmx.ajax('GET', dashboardUrl + '?partial=tasklist', {
             target: '#task-list-container',
             swap: 'innerHTML',
             values: values
         });
+        document.body.addEventListener('htmx:afterSwap', function restoreList(ev) {
+            if (ev.detail && ev.detail.target && ev.detail.target.id === 'task-list-container' && listContainer) {
+                listContainer.scrollTop = scrollTop;
+                applyGroupOpenState();
+                highlightSelectedTask();
+                document.body.removeEventListener('htmx:afterSwap', restoreList);
+            }
+        });
     }
 
     document.body.addEventListener('htmx:afterSwap', function (event) {
         var target = event.detail && event.detail.target;
-        if (target && target.id === 'detail-pane') {
-            refreshTaskList();
+        if (target && target.id === 'task-list-container') {
+            applyGroupOpenState();
+            highlightSelectedTask();
+        } else if (target && target.id === 'detail-pane') {
+            persistSelectedTaskFromUrl();
+            highlightSelectedTask();
         }
+    });
+
+    function readGroupState() {
+        try {
+            return JSON.parse(localStorage.getItem(groupStateKey) || '{}');
+        } catch (e) {
+            return {};
+        }
+    }
+
+    function writeGroupState(nextState) {
+        try {
+            localStorage.setItem(groupStateKey, JSON.stringify(nextState || {}));
+        } catch (e) {}
+    }
+
+    function bindGroupState() {
+        if (!listContainer) return;
+        listContainer.querySelectorAll('details.task-tree-section[data-group-key]').forEach(function (el) {
+            el.addEventListener('toggle', function () {
+                var state = readGroupState();
+                state[this.dataset.groupKey] = this.open ? 1 : 0;
+                writeGroupState(state);
+            });
+        });
+    }
+
+    function applyGroupOpenState() {
+        if (!listContainer) return;
+        var state = readGroupState();
+        listContainer.querySelectorAll('details.task-tree-section[data-group-key]').forEach(function (el) {
+            var key = el.dataset.groupKey;
+            if (Object.prototype.hasOwnProperty.call(state, key)) {
+                el.open = !!state[key];
+            }
+        });
+        bindGroupState();
+    }
+
+    function highlightSelectedTask() {
+        if (!listContainer) return;
+        listContainer.querySelectorAll('.task-tree-task').forEach(function (el) {
+            el.classList.remove('task-selected');
+        });
+        listContainer.querySelectorAll('.task-row-link').forEach(function (a) {
+            a.classList.remove('active');
+        });
+        if (!selectedTaskId) return;
+        var selectedLink = listContainer.querySelector('.task-row-link[data-task-id="' + selectedTaskId + '"]');
+        if (!selectedLink) return;
+        selectedLink.classList.add('active');
+        selectedLink.closest('.task-tree-task')?.classList.add('task-selected');
+    }
+
+    function persistSelectedTaskFromUrl() {
+        try {
+            var params = new URLSearchParams(window.location.search);
+            selectedTaskId = params.get('task') || selectedTaskId;
+        } catch (e) {}
+    }
+
+    document.body.addEventListener('click', function (event) {
+        var link = event.target.closest('.task-row-link[data-task-id]');
+        if (!link) return;
+        selectedTaskId = link.dataset.taskId;
+        highlightSelectedTask();
     });
 
     function csrfToken() {
@@ -191,6 +298,44 @@
     if ('serviceWorker' in navigator) {
         navigator.serviceWorker.register('/sw.js').catch(function () {});
     }
+
+    async function postReminderPreference(action) {
+        await fetch(pushReminderPreferenceUrl, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrfToken()
+            },
+            body: JSON.stringify({ action: action })
+        });
+    }
+
+    var modalEl = document.getElementById('pushReminderModal');
+    if (modalEl && window.bootstrap && bootstrap.Modal) {
+        var modal = new bootstrap.Modal(modalEl, { backdrop: 'static', keyboard: false });
+        modal.show();
+        document.getElementById('push-reminder-enable')?.addEventListener('click', function () {
+            Notification.requestPermission().then(function (perm) {
+                if (perm !== 'granted') return;
+                registerPushSubscription().then(function (ok) {
+                    if (!ok) return;
+                    postReminderPreference('later').finally(function () { modal.hide(); });
+                    if (notifBtn) notifBtn.classList.add('d-none');
+                }).catch(function () {});
+            }).catch(function () {});
+        });
+        document.getElementById('push-reminder-later')?.addEventListener('click', function () {
+            postReminderPreference('later').finally(function () { modal.hide(); });
+        });
+        document.getElementById('push-reminder-disable')?.addEventListener('click', function () {
+            postReminderPreference('disable').finally(function () { modal.hide(); });
+        });
+    }
+
+    persistSelectedTaskFromUrl();
+    applyGroupOpenState();
+    highlightSelectedTask();
 })();
 </script>
 {% endblock %}

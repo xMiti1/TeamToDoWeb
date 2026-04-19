@@ -1,4 +1,4 @@
-﻿from django.conf import settings
+from django.conf import settings
 from django.db import models
 
 
@@ -102,6 +102,12 @@ class Task(models.Model):
         blank=True,
         verbose_name='Zugewiesen an'
     )
+    related_tasks = models.ManyToManyField(
+        'self',
+        blank=True,
+        symmetrical=True,
+        verbose_name='Verknuepfte Aufgaben',
+    )
     is_team_visible = models.BooleanField(
         'Fuer Team sichtbar',
         default=False,
@@ -180,6 +186,27 @@ class PushSubscription(models.Model):
 
     def __str__(self):
         return f'{self.user_id}:{self.endpoint[:60]}'
+
+
+class NotificationRule(models.Model):
+    """Zentrale Admin-Regeln fuer Mail-Benachrichtigungen."""
+    is_enabled = models.BooleanField('E-Mail Agent aktiv', default=False)
+    notify_assignees_on_assignment = models.BooleanField(
+        'E-Mail bei Zuweisung an neue Assignees',
+        default=True,
+    )
+    notify_creator_on_assignment = models.BooleanField(
+        'Ersteller bei Assignee-Aenderungen informieren',
+        default=False,
+    )
+    updated_at = models.DateTimeField('Aktualisiert am', auto_now=True)
+
+    class Meta:
+        verbose_name = 'Benachrichtigungsregel'
+        verbose_name_plural = 'Benachrichtigungsregeln'
+
+    def __str__(self):
+        return 'Mail-Agent Regeln'
 
 
 class Attachment(models.Model):

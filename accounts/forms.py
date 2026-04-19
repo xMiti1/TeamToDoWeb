@@ -1,4 +1,4 @@
-﻿from django import forms
+from django import forms
 from django.contrib.auth.forms import AuthenticationForm, UserCreationForm
 from django.contrib.auth.password_validation import validate_password
 
@@ -53,11 +53,21 @@ class CustomAuthenticationForm(AuthenticationForm):
 class UserSettingsForm(forms.ModelForm):
     class Meta:
         model = User
-        fields = ('display_name', 'color', 'disable_private_tab')
+        fields = (
+            'display_name',
+            'color',
+            'disable_private_tab',
+            'email_notifications_enabled',
+            'push_reminder_frequency',
+            'push_reminder_disabled',
+        )
         widgets = {
             'display_name': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Anzeigename'}),
             'color': forms.TextInput(attrs={'class': 'form-control', 'type': 'color', 'style': 'height:2.5rem;cursor:pointer;'}),
             'disable_private_tab': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
+            'email_notifications_enabled': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
+            'push_reminder_frequency': forms.Select(attrs={'class': 'form-select'}),
+            'push_reminder_disabled': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
         }
 
     def clean(self):

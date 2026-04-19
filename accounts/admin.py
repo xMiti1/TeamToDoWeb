@@ -1,4 +1,4 @@
-﻿from django import forms
+from django import forms
 from django.conf import settings
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
@@ -43,15 +43,19 @@ class AdminUserCreationForm(UserCreationForm):
 class UserAdmin(BaseUserAdmin):
     form = UserAdminForm
     add_form = AdminUserCreationForm
-    list_display = ('email', 'display_name', 'disable_private_tab', 'first_name', 'last_name', 'is_staff', 'is_active')
-    list_filter = ('disable_private_tab', 'is_staff', 'is_superuser', 'is_active', 'teams')
+    list_display = ('email', 'display_name', 'disable_private_tab', 'email_notifications_enabled', 'first_name', 'last_name', 'is_staff', 'is_active')
+    list_filter = ('disable_private_tab', 'email_notifications_enabled', 'push_reminder_frequency', 'push_reminder_disabled', 'is_staff', 'is_superuser', 'is_active', 'teams')
     search_fields = ('email', 'display_name', 'first_name', 'last_name')
     ordering = ('email',)
     filter_horizontal = ('groups', 'user_permissions')
 
     fieldsets = (
         (None, {'fields': ('email', 'password')}),
-        ('Profil', {'fields': ('display_name', 'color', 'disable_private_tab', 'first_name', 'last_name', 'teams')}),
+        ('Profil', {'fields': (
+            'display_name', 'color', 'disable_private_tab',
+            'email_notifications_enabled', 'push_reminder_frequency', 'push_reminder_disabled',
+            'first_name', 'last_name', 'teams'
+        )}),
         ('Berechtigungen', {'fields': ('is_active', 'is_staff', 'is_superuser', 'groups', 'user_permissions')}),
         ('Wichtige Daten', {'fields': ('last_login', 'date_joined')}),
     )
@@ -60,6 +64,7 @@ class UserAdmin(BaseUserAdmin):
             'classes': ('wide',),
             'fields': (
                 'email', 'display_name', 'color', 'disable_private_tab', 'teams',
+                'email_notifications_enabled', 'push_reminder_frequency', 'push_reminder_disabled',
                 'password1', 'password2', 'is_staff', 'is_active',
             ),
         }),

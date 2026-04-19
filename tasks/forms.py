@@ -1,9 +1,30 @@
-﻿from django import forms
+from django import forms
 from django.contrib.auth import get_user_model
 
 from .models import Comment, Group, Task, Team
 
 User = get_user_model()
+
+
+def _group_hierarchy_choices(groups):
+    by_parent = {}
+    for group in groups:
+        by_parent.setdefault(group.parent_id, []).append(group)
+    for children in by_parent.values():
+        children.sort(key=lambda item: (item.name or '').lower())
+    result = []
+
+    def walk(parent_id, level, branch):
+        for child in by_parent.get(parent_id, []):
+            if child.id in branch:
+                continue
+            result.append((child.id, ('-- ' * level) + child.name))
+            next_branch = set(branch)
+            next_branch.add(child.id)
+            walk(child.id, level + 1, next_branch)
+
+    walk(None, 0, set())
+    return result
 
 
 class TaskForm(forms.ModelForm):
@@ -43,9 +64,11 @@ class TaskForm(forms.ModelForm):
                 selected_team_id = None
 
         if selected_team_id:
-            self.fields['group'].queryset = Group.objects.filter(team_id=selected_team_id).order_by('name')
+            group_qs = Group.objects.filter(team_id=selected_team_id).select_related('parent').order_by('name')
         else:
-            self.fields['group'].queryset = Group.objects.filter(team__isnull=True).order_by('name')
+            group_qs = Group.objects.filter(team__isnull=True).select_related('parent').order_by('name')
+        self.fields['group'].queryset = group_qs
+        self.fields['group'].choices = [('', '---------')] + _group_hierarchy_choices(list(group_qs))
         if selected_team_id:
             self.fields['assignees'].queryset = User.objects.filter(
                 is_active=True,

@@ -19,6 +19,13 @@
         [data-bs-theme=dark] .task-sidebar .form-control, [data-bs-theme=dark] .task-sidebar .input-group-text { background: var(--bs-body-bg); }
         .dashboard-layout { min-height: calc(100vh - 56px); }
         .task-tree-task a:hover { background: var(--bs-secondary-bg); }
+        .task-tree-task.task-selected {
+            background: rgba(13, 110, 253, 0.18);
+            border-radius: 0.35rem;
+        }
+        .task-tree-task.task-selected a {
+            font-weight: 600;
+        }
         .task-tree-task.task-unread {
             background: #d1e7dd;
             border-radius: 0.35rem;

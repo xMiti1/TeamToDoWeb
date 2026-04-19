@@ -1,4 +1,4 @@
-﻿from django.shortcuts import render, redirect, get_object_or_404
+from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
 from django.views.generic import ListView, CreateView, UpdateView, DeleteView, DetailView
 from django.urls import reverse_lazy, reverse
@@ -8,6 +8,8 @@ from django.http import HttpResponse, JsonResponse, Http404, FileResponse
 from django.views import View
 from django.utils import timezone
 from django.utils.html import escape
+from django.core.mail import send_mail
+from django.conf import settings
 from django.contrib import messages
 from datetime import datetime
 from io import BytesIO
@@ -26,7 +28,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import mm
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image as RLImage
 
-from .models import Task, Group, Comment, ChangeLog, Attachment, Team, TaskReadState, PushSubscription
+from .models import Task, Group, Comment, ChangeLog, Attachment, Team, TaskReadState, PushSubscription, NotificationRule
 from .forms import TaskForm, GroupForm, CommentForm
 try:
     from pywebpush import webpush, WebPushException
@@ -169,6 +171,75 @@ def _notify_new_task_created(task, actor_user):
         _send_web_push(subscription, payload)
 
 
+def _should_show_push_reminder(user):
+    if user.push_reminder_disabled:
+        return False
+    if PushSubscription.objects.filter(user=user, is_active=True).exists():
+        return False
+    if user.push_reminder_frequency == 'login':
+        return True
+    if not user.push_reminder_last_shown_at:
+        return True
+    return (timezone.now() - user.push_reminder_last_shown_at).total_seconds() >= 86400
+
+
+def _group_hierarchical_items(groups):
+    by_parent = {}
+    for g in groups:
+        by_parent.setdefault(g.parent_id, []).append(g)
+    for children in by_parent.values():
+        children.sort(key=lambda item: (item.name or '').lower())
+    ordered = []
+
+    def walk(parent_id, level, branch):
+        for child in by_parent.get(parent_id, []):
+            if child.id in branch:
+                continue
+            ordered.append((child, level))
+            next_branch = set(branch)
+            next_branch.add(child.id)
+            walk(child.id, level + 1, next_branch)
+
+    walk(None, 0, set())
+    rendered = {g.id for g, _ in ordered}
+    for orphan in sorted([g for g in groups if g.id not in rendered], key=lambda item: (item.name or '').lower()):
+        ordered.append((orphan, 0))
+        walk(orphan.id, 1, {orphan.id})
+    return ordered
+
+
+def _notification_rule():
+    return NotificationRule.objects.order_by('pk').first()
+
+
+def _send_assignment_notification_emails(task, actor_user, old_assignee_ids, new_assignees):
+    rule = _notification_rule()
+    if not rule or not rule.is_enabled:
+        return
+    actor_label = actor_user.display_name or actor_user.email
+    new_assignee_ids = {u.pk for u in new_assignees}
+    old_assignee_ids = set(old_assignee_ids or [])
+    added_ids = new_assignee_ids - old_assignee_ids
+    recipient_emails = set()
+    if rule.notify_assignees_on_assignment and added_ids:
+        for user in new_assignees:
+            if user.pk in added_ids and user.email_notifications_enabled and user.email:
+                recipient_emails.add(user.email)
+    if rule.notify_creator_on_assignment and task.created_by_id and task.created_by_id != actor_user.pk:
+        creator = task.created_by
+        if creator.email_notifications_enabled and creator.email:
+            recipient_emails.add(creator.email)
+    if not recipient_emails:
+        return
+    subject = f'[TeamToDo] Zuweisung aktualisiert: {task.title}'
+    body = (
+        f'Die Aufgabe "{task.title}" wurde von {actor_label} aktualisiert.\n'
+        f'Status: {task.get_status_display()} ({task.progress}%)\n'
+        f'Link: {settings.APP_BASE_URL or ""}{reverse("tasks:dashboard")}?task={task.pk}\n'
+    )
+    send_mail(subject, body, getattr(settings, 'DEFAULT_FROM_EMAIL', None), list(recipient_emails), fail_silently=True)
+
+
 def _normalize_progress(raw_value, default=0):
     try:
         progress = int(raw_value)
@@ -277,6 +348,7 @@ class TaskDashboardView(LoginRequiredMixin, ListView):
         if request.headers.get('HX-Request') and request.GET.get('partial') == 'tasklist':
             context = self.get_context_data()
             return render(request, 'tasks/partials/task_list_left.html', context)
+        self._show_push_reminder_popup = _webpush_enabled() and _should_show_push_reminder(request.user)
         return super().get(request, *args, **kwargs)
 
     def get_queryset(self):
@@ -372,6 +444,7 @@ class TaskDashboardView(LoginRequiredMixin, ListView):
         ctx['group_tree'] = _build_group_tree(groups, tasks_by_group)
         ctx['group_sections'] = _build_group_sections(groups, tasks_by_group)
         ctx['groups'] = groups
+        ctx['group_levels'] = _group_hierarchical_items(groups)
         ctx['search_query'] = (self.request.GET.get('q') or '').strip()
         ctx['sort_mode'] = self.request.GET.get('sort', 'status')
         ctx['section_mode'] = self.request.GET.get('section', 'all')
@@ -394,6 +467,9 @@ class TaskDashboardView(LoginRequiredMixin, ListView):
         ctx['team_tabs'] = tabs
         default_scope = ctx['team_tabs'][0][0] if ctx['team_tabs'] else 'private'
         ctx['active_scope'] = scope if any(scope == key for key, _ in ctx['team_tabs']) else default_scope
+        selected_task_raw = (self.request.GET.get('task') or '').strip()
+        ctx['selected_task_id'] = int(selected_task_raw) if selected_task_raw.isdigit() else None
+        ctx['show_push_reminder_popup'] = bool(getattr(self, '_show_push_reminder_popup', False))
         return ctx
 
 
@@ -482,6 +558,7 @@ class TaskCreateView(LoginRequiredMixin, CreateView):
             form.instance.status = 'urgent'
         result = super().form_valid(form)
         _log_change(self.request, 'task', form.instance.pk, 'created', None, None, form.instance.title)
+        _send_assignment_notification_emails(form.instance, self.request.user, [], list(form.instance.assignees.all()))
         transaction.on_commit(lambda: _notify_new_task_created(form.instance, self.request.user))
         return result
 
@@ -577,18 +654,32 @@ def _render_detail_pane(request, task):
     users_qs = User.objects.filter(is_active=True).order_by('display_name', 'email')
     if task.team_id:
         users_qs = task.team.members.filter(is_active=True).order_by('display_name', 'email')
+    groups = list(
+        Group.objects.filter(team_id=task.team_id).select_related('parent').order_by('name')
+        if task.team_id else Group.objects.filter(team__isnull=True).select_related('parent').order_by('name')
+    )
+    related_candidates = list(
+        _task_queryset_visible_to(request.user)
+        .exclude(pk=task.pk)
+        .select_related('group')
+        .order_by('title', 'id')[:300]
+    )
     return render(request, 'tasks/partials/detail_pane.html', {
         'task': task,
         'comment_form': CommentForm(),
         'can_edit': _task_editable_by(task, request.user),
         'users': users_qs,
         'teams': request.user.teams.order_by('name'),
-        'groups': Group.objects.filter(team_id=task.team_id).select_related('parent').order_by('name') if task.team_id else Group.objects.filter(team__isnull=True).select_related('parent').order_by('name'),
+        'groups': groups,
+        'group_levels': _group_hierarchical_items(groups),
         'selected_assignee_ids': list(task.assignees.values_list('pk', flat=True)),
+        'selected_related_task_ids': list(task.related_tasks.values_list('pk', flat=True)),
+        'related_task_candidates': related_candidates,
         'comment_items': [c for c in all_comments if not c.is_system],
         'log_items': [c for c in all_comments if c.is_system],
         'all_attachments': visible_attachments,
         'comment_inline_token': uuid.uuid4().hex,
+        'active_scope': (request.GET.get('scope') or '').strip(),
     })
 
 
@@ -623,12 +714,16 @@ class TaskQuickUpdateView(LoginRequiredMixin, View):
             new_assignees = list(assignee_qs.distinct())
         else:
             new_assignees = []
+        related_ids_raw = request.POST.getlist('related_tasks')
+        related_ids = [int(v) for v in related_ids_raw if str(v).isdigit()]
+        related_tasks = list(_task_queryset_visible_to(request.user).filter(pk__in=related_ids).exclude(pk=task.pk))
 
         old_status = task.status
         old_progress = task.progress
         old_team_id = task.team_id
         old_group_id = task.group_id
         old_assignees = list(task.assignees.values_list('pk', flat=True))
+        old_related_ids = set(task.related_tasks.values_list('pk', flat=True))
 
         if status == 'done':
             progress = 100
@@ -645,6 +740,7 @@ class TaskQuickUpdateView(LoginRequiredMixin, View):
         task.version += 1
         task.save(update_fields=['status', 'urgent', 'progress', 'team', 'is_team_visible', 'group', 'updated_by', 'version', 'updated_at'])
         task.assignees.set(new_assignees)
+        task.related_tasks.set(related_tasks)
 
         disp = request.user.display_name or request.user.email
         changes = []
@@ -668,8 +764,14 @@ class TaskQuickUpdateView(LoginRequiredMixin, View):
             names = ', '.join(a.display_name or a.email for a in new_assignees) or '—'
             _log_change(request, 'task', task.pk, 'updated', 'assignees', None, names)
             changes.append(f'Zuweisung auf {names}')
+        new_related_ids = {t.pk for t in related_tasks}
+        if old_related_ids != new_related_ids:
+            links = ', '.join(t.title for t in related_tasks) or '—'
+            _log_change(request, 'task', task.pk, 'updated', 'related_tasks', ','.join(str(v) for v in sorted(old_related_ids)), links)
+            changes.append(f'Verknuepfungen auf {links}')
         if changes:
             _add_system_comment(task, f'SYSTEM: Änderungen von "{disp}": ' + '; '.join(changes) + '.')
+        _send_assignment_notification_emails(task, request.user, old_assignees, new_assignees)
 
         if request.headers.get('HX-Request'):
             return _render_detail_pane(request, task)
@@ -996,6 +1098,26 @@ class PushSubscriptionView(LoginRequiredMixin, View):
         if endpoint:
             qs = qs.filter(endpoint=endpoint)
         qs.update(is_active=False)
+        return JsonResponse({'ok': True})
+
+
+class PushReminderPreferenceView(LoginRequiredMixin, View):
+    """Merkt Benutzerentscheidungen des Push-Erinnerungsdialogs."""
+    def post(self, request):
+        try:
+            data = json.loads(request.body.decode('utf-8'))
+        except Exception:
+            data = {}
+        action = (data.get('action') or '').strip().lower()
+        update_fields = []
+        if action == 'disable':
+            request.user.push_reminder_disabled = True
+            update_fields.append('push_reminder_disabled')
+        if action in ('later', 'disable'):
+            request.user.push_reminder_last_shown_at = timezone.now()
+            update_fields.append('push_reminder_last_shown_at')
+        if update_fields:
+            request.user.save(update_fields=update_fields)
         return JsonResponse({'ok': True})
 
 

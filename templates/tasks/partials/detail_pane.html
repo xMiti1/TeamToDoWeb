@@ -1,4 +1,4 @@
-﻿{% load tasks_text %}
+{% load tasks_text %}
 <div id="detail-pane-content" class="h-100 d-flex flex-column">
     <div class="d-flex justify-content-between align-items-start mb-2">
         <div>
@@ -50,10 +50,19 @@
             <label class="form-label small">Gruppe</label>
             <select name="group" class="form-select form-select-sm" style="max-width:18rem">
                 <option value="">Ohne Gruppe</option>
-                {% for g in groups %}
-                <option value="{{ g.pk }}" {% if task.group_id == g.pk %}selected{% endif %}>{{ g.name }}</option>
+                {% for g, level in group_levels %}
+                <option value="{{ g.pk }}" {% if task.group_id == g.pk %}selected{% endif %}>{% for _ in ""|ljust:level %}&nbsp;&nbsp;{% endfor %}{{ g.name }}</option>
                 {% endfor %}
             </select>
+        </div>
+        <div class="mb-2">
+            <label class="form-label small">Verknuepfte Aufgaben</label>
+            <select name="related_tasks" class="form-select form-select-sm" style="max-width:30rem" multiple size="6">
+                {% for related in related_task_candidates %}
+                <option value="{{ related.pk }}" {% if related.pk in selected_related_task_ids %}selected{% endif %}>#{{ related.pk }} - {{ related.title }}</option>
+                {% endfor %}
+            </select>
+            <div class="form-text">Mehrfachauswahl mit Strg/Cmd.</div>
         </div>
         <div class="mb-2">
             <label class="form-label small">Fortschritt</label>
@@ -103,6 +112,20 @@
         <div class="text-body-secondary small mb-2">Keine Beschreibung hinterlegt.</div>
         {% endif %}
 
+    </div>
+    <div class="mb-3">
+        <label class="form-label small">Verwandte Aufgaben</label>
+        <div class="small">
+            {% for rel in task.related_tasks.all %}
+                <a href="javascript:void(0)" class="task-row-link d-inline-block me-2" data-task-id="{{ rel.pk }}"
+                   hx-get="{% url 'tasks:detail_pane' rel.pk %}"
+                   hx-target="#detail-pane"
+                   hx-swap="innerHTML"
+                   hx-push-url="{% url 'tasks:dashboard' %}?{% if active_scope %}scope={{ active_scope|urlencode }}&{% endif %}task={{ rel.pk }}">#{{ rel.pk }} {{ rel.title }}</a>
+            {% empty %}
+                <span class="text-body-secondary">Keine Verknuepfungen.</span>
+            {% endfor %}
+        </div>
     </div>
 
     <hr>
