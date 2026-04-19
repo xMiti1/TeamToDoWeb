@@ -209,12 +209,16 @@ def _group_hierarchical_items(groups):
 
 
 def _notification_rule():
+    active_rule = NotificationRule.objects.filter(is_enabled=True).order_by('pk').first()
+    if active_rule:
+        return active_rule
     return NotificationRule.objects.order_by('pk').first()
 
 
 def _send_assignment_notification_emails(task, actor_user, old_assignee_ids, new_assignees):
     rule = _notification_rule()
     if not rule or not rule.is_enabled:
+        logger.info('Assignment mail skipped for task %s: no active notification rule', task.pk)
         return
     actor_label = actor_user.display_name or actor_user.email
     new_assignee_ids = {u.pk for u in new_assignees}
@@ -230,6 +234,12 @@ def _send_assignment_notification_emails(task, actor_user, old_assignee_ids, new
         if creator.email_notifications_enabled and creator.email:
             recipient_emails.add(creator.email)
     if not recipient_emails:
+        logger.info(
+            'Assignment mail skipped for task %s: no recipients (added_ids=%s, new_assignees=%s)',
+            task.pk,
+            sorted(added_ids),
+            [user.pk for user in new_assignees],
+        )
         return
     subject = f'[TeamToDo] Zuweisung aktualisiert: {task.title}'
     body = (
@@ -237,7 +247,26 @@ def _send_assignment_notification_emails(task, actor_user, old_assignee_ids, new
         f'Status: {task.get_status_display()} ({task.progress}%)\n'
         f'Link: {settings.APP_BASE_URL or ""}{reverse("tasks:dashboard")}?task={task.pk}\n'
     )
-    send_mail(subject, body, getattr(settings, 'DEFAULT_FROM_EMAIL', None), list(recipient_emails), fail_silently=True)
+    try:
+        sent = send_mail(
+            subject,
+            body,
+            getattr(settings, 'DEFAULT_FROM_EMAIL', None),
+            list(recipient_emails),
+            fail_silently=False,
+        )
+        logger.info(
+            'Assignment mail send result for task %s: sent=%s recipients=%s',
+            task.pk,
+            sent,
+            sorted(recipient_emails),
+        )
+    except Exception:
+        logger.exception(
+            'Assignment mail failed for task %s recipients=%s',
+            task.pk,
+            sorted(recipient_emails),
+        )
 
 
 def _normalize_progress(raw_value, default=0):
